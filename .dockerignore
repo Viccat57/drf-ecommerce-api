@@ -1,0 +1,10 @@
+.git
+.gitignore
+venv/
+.venv/
+.env
+.env.*
+!.env.example
+garage.toml
+__pycache__/
+*.pyc

@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+garage.toml
+venv/
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+db.sqlite3
+staticfiles/
