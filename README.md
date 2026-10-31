@@ -8,19 +8,19 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 
 | Componente | Versión / detalle |
 | --- | --- |
-| Python | 3.14 (imagen `python:3.14-slim`) |
+| Python | 3.14 (imagen `python:3.14.10-slim`) |
 | Django | 6.1 |
 | Django REST framework | Paginación activada (10 por página) |
 | Base de datos | PostgreSQL 17 (contenedor `postgres:17`) |
 | Driver | `psycopg[binary]` |
-| Imágenes | Pillow 12.3.0 (requerido por `ImageField`) |
+| Imágenes | Pillow 13.0.0 (requerido por `ImageField`) |
 | Orquestación | Docker Compose (servicios `db` , `garage` y `web`) |
 | Almacenamiento de imágenes | Garage v2.4.1, compatible con S3 |
 | Integración | django-storages[s3]==1.14.6 |
 
 ## Cómo levantarlo
 
-Garage requiere una inicialización única (layout, bucket y llave de acceso), que se describe en [Inicialización de Garage] (#inicialización-de-garage). Por ello, el arranque se realiza en dos fases.
+Garage requiere una inicialización única (layout, bucket y llave de acceso), que se describe en [Inicialización de Garage](#inicialización-de-garage). Por ello, el arranque se realiza en dos fases.
 
 1. Copia las plantillas de configuración:
 
@@ -45,7 +45,7 @@ Garage requiere una inicialización única (layout, bucket y llave de acceso), q
 
 3. Completa `.env` con valores propios. Las variables `GARAGE_ACCESS_KEY_ID` y `GARAGE_SECRET_ACCESS_KEY` se dejan vacías hasta el paso 5.
 
-4. Levanta la base de datos y Garage, y sigue la guía de [Inicialización de Garage] (#inicialización-de-garage):
+4. Levanta la base de datos y Garage, y sigue la guía de [Inicialización de Garage](#inicialización-de-garage):
 
    ```bash
    docker compose up -d db garage
@@ -339,3 +339,4 @@ Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 - [ ] Servicio Ollama opcional en Compose (profiles: ["ai"]).
 - [ ] Embeddings de productos y endpoint de búsqueda semántica.
 - [ ] Respuesta del asistente con los productos recuperados.
+- [ ] Limitar formatos y tamaño en la subida de imágenes (formatos permitidos y límite de píxeles).
