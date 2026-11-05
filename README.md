@@ -14,7 +14,7 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 | Base de datos | PostgreSQL 17 (contenedor `postgres:17`) |
 | Driver | `psycopg[binary]` |
 | Imágenes | Pillow 13.0.0 (requerido por `ImageField`) |
-| Orquestación | Docker Compose (servicios `db` , `garage` y `web`) |
+| Orquestación | Docker Compose (servicios `db` ,`garage` y `web`) |
 | Almacenamiento de imágenes | Garage v2.4.1, compatible con S3 |
 | Integración | django-storages[s3]==1.14.6 |
 
@@ -62,6 +62,17 @@ Garage requiere una inicialización única (layout, bucket y llave de acceso), q
 6. Abre `http://localhost:8000/admin/` (panel de administración) o `http://localhost:8000/api/` (API navegable).
 
 La base de datos no publica puertos hacia el host; solo es accesible desde la red interna de Compose. Los datos persisten en el volumen nombrado `pgdata`.
+
+## Pruebas
+
+Las pruebas usan `APITestCase` y una base de datos temporal que Django crea y elimina por sí mismo, sin afectar a los datos de desarrollo. Con los servicios levantados:
+
+```bash
+docker compose exec web python manage.py test
+docker compose exec web python manage.py test rag_app.tests.test_brand -v 2
+```
+
+**Cobertura actual**: reglas de Brand y Category en la API, y reglas de integridad de Category en la base de datos y el ORM. Product e imágenes están pendientes.
 
 ## Endpoints disponibles
 
@@ -284,6 +295,7 @@ producto indicado.
   respuesta 201 Created.
 - Creación de una segunda imagen principal para el mismo producto:
   la anterior quedó con is_primary=false y la nueva con is_primary=true.
+- Subida de imagenes con Pillow 13.0.0 respondió `201 Created`.
 
 Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 
@@ -308,18 +320,20 @@ Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 - **Sin autenticación ni permisos**: cualquier cliente que llegue al puerto 8000 puede leer y escribir. El puerto se publica solo en 127.0.0.1, por lo que únicamente es accesible desde la propia máquina.
 - **Las validaciones de la API solo aplican a la API**: el panel de administración, el shell y los scripts no pasan por los serializers. El caso más delicado son los ciclos de categorías; la base solo bloquea la autorreferencia directa. Una posible solución sería mover la regla a `Category.clean()`, pero se mantuvo simple.
 - **Reactivación de categorías sin comprobar el padre**: un `PATCH` con `active: true` no verifica que la categoría padre esté activa. La reactivación de productos sí comprueba que su marca y categoría efectivas estén activas.
-- **Sin pruebas automáticas** por ahora; las reglas se han verificado manualmente.
+- **Pruebas automáticas parciales**: cubren Brand y Category; Product e imágenes pendientes.
 
 ## Seguridad
 
-- Las credenciales viven en `.env` y `garage.toml`, que están en `.gitignore` y `.dockerignore`. El repositorio solo incluye plantillas (`.env.example`,`garage.toml.example`).
+- Las credenciales viven en `.env` y `garage.toml`, que están en `.gitignore` y `.dockerignore`. El repositorio solo incluye plantillas (`.env.example`, `garage.toml.example`).
 - PostgreSQL no publica puertos. La API S3 de Garage y la API de Django solo escuchan en `127.0.0.1`.
 - La key de Garage solo tiene permisos de lectura y escritura sobre un bucket.
-- **limitación conocida**: la API no tiene autenticación. No la exponga a Internet en este estado.
+- **LIMITACIÓN CONOCIDA**: la API no tiene autenticación. No la expongas a Internet en este estado.
+- La imagen base puede reportar vulnerabilidades en componentes incluidos sin parche disponible. El proyecto está pensado para desarrollo local; para producción se recomienda una imagen mínima, ejecución sin root y escaneo en CI.
 
 ## Pendiente
 
-- [ ] Pruebas automáticas con `APITestCase` para las reglas de Brand y Category.
+- [x] Pruebas automáticas con `APITestCase` para las reglas de Brand y Category.
+- [ ] Pruebas automáticas para Product
 - [x] Endpoints de productos, con serializers de lista y detalle y validación de precio y stock.
 - [ ] Filtros y búsqueda de productos por categoría, marca, texto y orden.
 - [ ] Autenticación con `TokenAuthentication` y permisos por grupos de Django.
