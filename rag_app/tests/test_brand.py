@@ -1,20 +1,14 @@
-from decimal import Decimal
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
-from rag_app.models import Brand,Product,Category
+from rag_app.models import Brand,Category
+from rag_app.tests.base import BaseAPITestCase
 
 
-class BrandListTests(APITestCase):
+class BrandListTests(BaseAPITestCase):
     def setUp(self):
         self.activa = Brand.objects.create(name="Nueva Marca", active=True)
         self.inactiva = Brand.objects.create(name="Vieja Marca", active=False)
         self.categoria = Category.objects.create(name='CategoryNew',slug='ctgnew')
-    
-    def crear_producto(self,marca,sku="sku-1", **extra):
-         return Product.objects.create(
-             name='Test_product', sku=sku,description='test product',price=Decimal("1.01") ,brand=marca,category=self.categoria,**extra,
-         )   
 
     def test_get_solo_muestra_marcas_activas(self):
         response = self.client.get(reverse("brand-list"))
