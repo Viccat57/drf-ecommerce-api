@@ -14,7 +14,7 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 | Base de datos | PostgreSQL 17 (contenedor `postgres:17`) |
 | Driver | `psycopg[binary]` |
 | Imágenes | Pillow 13.0.0 (requerido por `ImageField`) |
-| Orquestación | Docker Compose (servicios `db` ,`garage` y `web`) |
+| Orquestación | Docker Compose (servicios `db`, `garage` y `web`) |
 | Almacenamiento de imágenes | Garage v2.4.1, compatible con S3 |
 | Integración | django-storages[s3]==1.14.6 |
 
@@ -59,7 +59,19 @@ Garage requiere una inicialización única (layout, bucket y llave de acceso), q
    docker compose exec web python manage.py createsuperuser
    ```
 
-6. Abre `http://localhost:8000/admin/` (panel de administración) o `http://localhost:8000/api/` (API navegable).
+6. Carga los datos de demostración (opcional):
+
+   ```bash
+   docker compose exec web python manage.py seed_demo
+   ```
+
+   El comando es idempotente: puede ejecutarse varias veces sin duplicar
+   registros. Crea marcas, categorías y productos basados en artículos
+   reales; los precios son aproximados y las descripciones fueron
+   redactadas para este proyecto.
+
+7. Abre `http://localhost:8000/admin/` (panel de administración) o
+   `http://localhost:8000/api/` (API navegable).
 
 La base de datos no publica puertos hacia el host; solo es accesible desde la red interna de Compose. Los datos persisten en el volumen nombrado `pgdata`.
 
@@ -73,6 +85,19 @@ docker compose exec web python manage.py test rag_app.tests.test_brand -v 2
 ```
 
 **Cobertura actual**: reglas de Brand y Category en la API, y reglas de integridad de Category en la base de datos y el ORM. Product e imágenes están pendientes.
+
+Para reiniciar los datos de desarrollo sin afectar Garage, se puede
+vaciar la base de datos y volver a cargar el catálogo de demostración:
+
+```bash
+docker compose exec web python manage.py flush
+docker compose exec web python manage.py createsuperuser
+docker compose exec web python manage.py seed_demo
+```
+
+`flush` elimina todas las filas de PostgreSQL, incluido el superusuario.
+Los archivos ya subidos a Garage permanecen en el bucket, pero quedan
+sin referencia en la base de datos.
 
 ## Endpoints disponibles
 
@@ -295,7 +320,7 @@ producto indicado.
   respuesta 201 Created.
 - Creación de una segunda imagen principal para el mismo producto:
   la anterior quedó con is_primary=false y la nueva con is_primary=true.
-- Subida de imagenes con Pillow 13.0.0 respondió `201 Created`.
+- Subida de imágenes con Pillow 13.0.0 respondió `201 Created`.
 
 Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 
@@ -332,25 +357,37 @@ Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 
 ## Pendiente
 
-- [x] Pruebas automáticas con `APITestCase` para las reglas de Brand y Category.
-- [ ] Pruebas automáticas para Product
-- [x] Endpoints de productos, con serializers de lista y detalle y validación de precio y stock.
-- [ ] Filtros y búsqueda de productos por categoría, marca, texto y orden.
-- [ ] Autenticación con `TokenAuthentication` y permisos por grupos de Django.
-- [x] Endpoints de imágenes mediante `ProductImageViewSet`.
+### Imágenes
+
 - [x] Almacenamiento de imágenes en Garage con `django-storages[s3]`.
-- [x] Prueba manual de subida de imágenes y reemplazo de la principal mediante POST.
-- [x] Filtrado de imágenes por producto mediante `/api/product-images?product=<id>`.
-- [ ] Pruebas manuales de creación de imágenes secundarias y creación sin enviar `is_primary`.
-- [ ] Pruebas manuales de cambio y desmarcado de la principal mediante PATCH.
-- [ ] Verificar la descarga y visualización de una imagen real desde el host.
-- [ ] Implementar y probar la limpieza de archivos al eliminar registros o sustituir imágenes.
-- [ ] Pruebas automatizadas de imágenes y manejo de cambios concurrentes de principal.
-- [ ] Endpoints de reseñas.
-- [ ] Asesor de compras con RAG sobre el catálogo.
 - [x] Documentar la inicialización de Garage desde cero y proporcionar una plantilla `garage.toml.example` sin secretos.
-- [ ] Imagen de PostgreSQL con pgvector y migración de la extensión.
-- [ ] Servicio Ollama opcional en Compose (profiles: ["ai"]).
+- [ ] Limitar formatos y tamaño en la subida de imágenes (formatos permitidos y límite de píxeles).
+- [ ] Probar la limpieza de archivos al eliminar registros o sustituir imágenes.
+- [ ] Verificar la descarga y visualización de una imagen real desde el host.
+- [ ] Pruebas manuales de cambio y desmarcado de la principal mediante PATCH.
+
+### Tests
+
+- [x] Comando `seed_demo` con marcas, categorías y productos de demostración.
+- [x] Prueba manual de subida de imágenes y reemplazo de la principal mediante POST.
+- [x] Pruebas automáticas con `APITestCase` para las reglas de Brand y Category.
+- [ ] Pruebas automatizadas de imágenes y manejo de cambios concurrentes de principal.
+- [ ] Pruebas automatizadas para Product.
+- [ ] Pruebas manuales de creación de imágenes secundarias y creación sin enviar `is_primary`.
+
+### RAG
+
+- [ ] Asesor de compras con RAG sobre el catálogo.
 - [ ] Embeddings de productos y endpoint de búsqueda semántica.
 - [ ] Respuesta del asistente con los productos recuperados.
-- [ ] Limitar formatos y tamaño en la subida de imágenes (formatos permitidos y límite de píxeles).
+- [ ] Servicio Ollama opcional en Compose (profiles: ["ai"]).
+- [ ] Imagen de PostgreSQL con pgvector y migración de la extensión.
+
+### API
+
+- [x] Endpoints de productos, con serializers de lista y detalle y validación de precio y stock.
+- [x] Endpoints de imágenes mediante `ProductImageViewSet`.
+- [x] Filtrado de imágenes por producto mediante `/api/product-images?product=<id>`.
+- [ ] Filtros y búsqueda de productos por categoría, marca, texto y orden.
+- [ ] Autenticación con `TokenAuthentication` y permisos por grupos de Django.
+- [ ] Endpoints de reseñas.
