@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
+from pgvector.django import VectorField
+from pgvector.django import HnswIndex
 
 # Create your models here.
 class Brand(models.Model):
@@ -29,6 +31,7 @@ class Category(models.Model):
             )
         ]
     
+    
 class Product(models.Model):
     brand = models.ForeignKey(Brand, on_delete=models.PROTECT)
     category = models.ForeignKey(Category, on_delete=models.PROTECT)
@@ -40,6 +43,7 @@ class Product(models.Model):
     specifications = models.JSONField(default=dict)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    embedding = VectorField(dimensions=768, null=True, blank=True)
     
     def __str__(self):
         return f'{self.name} | stock: {self.stock} | ${self.price}'
@@ -55,6 +59,13 @@ class Product(models.Model):
               name='product_price_gte_0',  
             ),
         ]
+        indexes = [
+        HnswIndex(
+            name='product_embedding_hnsw',
+            fields=['embedding'],
+            opclasses=['vector_cosine_ops'],
+        ),
+    ]
     
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
