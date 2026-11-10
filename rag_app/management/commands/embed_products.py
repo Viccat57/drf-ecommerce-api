@@ -10,7 +10,7 @@ class Command(BaseCommand):
         total = products.count()
         self.stdout.write(f'Procesando {total} productos...')
         for i, product in enumerate(products, 1):
-            text = f"{product.name}. {product.description}. {product.specifications}"
+            text = f"{product.name}. {product.description}. {product.specifications}. Categoría: {product.category.name}"
             embedding = generate_embedding(text)
             product.embedding = embedding
             product.save(update_fields=['embedding'])
