@@ -30,8 +30,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ai
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
 
 volumes:
   pgdata:
   garage-meta:
   garage-data:
+  ollama-models:
