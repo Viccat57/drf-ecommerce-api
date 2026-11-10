@@ -2,7 +2,7 @@
 
 Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y, más adelante, un asesor de compras basado en RAG.
 
-> **Estado:**  en desarrollo. La API de catálogo y el almacenamiento de imágenes en Garage funcionan. El asistente RAG está planeado y aún no se implementa. Este documento solo describe lo que existe y se ha probado; lo pendiente aparece en la sección [Pendiente](#pendiente).
+> **Estado:**  en desarrollo. La API de catálogo, el almacenamiento de imágenes en Garage y el asistente RAG básico funcionan. Este documento solo describe lo que existe y se ha probado; lo pendiente aparece en la sección [Pendiente](#pendiente).
 
 ## Stack
 
@@ -15,6 +15,8 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 | Driver | `psycopg[binary]` |
 | Imágenes | Pillow 13.0.0 (requerido por `ImageField`) |
 | Orquestación | Docker Compose (servicios `db`, `garage` y `web`) |
+| Búsqueda vectorial | pgvector (extensión PostgreSQL, índice HNSW) |
+| IA local | Ollama (embeddings con `nomic-embed-text`, chat con `qwen3.5:4b`) |
 | Almacenamiento de imágenes | Garage v2.4.1, compatible con S3 |
 | Integración | django-storages[s3]==1.14.6 |
 
@@ -70,7 +72,18 @@ Garage requiere una inicialización única (layout, bucket y llave de acceso), q
    reales; los precios son aproximados y las descripciones fueron
    redactadas para este proyecto.
 
-7. Abre `http://localhost:8000/admin/` (panel de administración) o
+7. (Opcional) Levanta el asistente RAG con Ollama:
+
+   ```bash
+   docker compose --profile ai up -d
+   docker compose exec ollama ollama pull nomic-embed-text
+   docker compose exec ollama ollama pull qwen3.5:4b
+   docker compose exec web python manage.py embed_products
+   ```
+
+   El servicio `ollama` usa el profile `ai` y requiere GPU NVIDIA configurada en Docker. Los modelos se descargan la primera vez y persisten en el volumen `ollama-models`.
+
+8. Abre `http://localhost:8000/admin/` (panel de administración) o
    `http://localhost:8000/api/` (API navegable).
 
 La base de datos no publica puertos hacia el host; solo es accesible desde la red interna de Compose. Los datos persisten en el volumen nombrado `pgdata`.
@@ -111,6 +124,7 @@ sin referencia en la base de datos.
 | `/api/products/<id>` | GET, PUT, PATCH, DELETE | El detalle incluye también los productos inactivos |
 | `/api/product-images` | GET, POST | Lista registros de imágenes y permite subir archivos mediante multipart/form-data |
 | `/api/product-images/<id>` | GET, PUT, PATCH, DELETE | Consulta y modifica un registro de imagen; DELETE realiza borrado real de la fila |
+| `/api/ia/ask` | POST | Asistente RAG: recibe `{"query": "..."}` y retorna una recomendación basada en el catálogo |
 
 En marcas, categorías y productos, `DELETE` realiza **borrado lógico**
 (`active = false`). Para reactivar, se utiliza `PATCH` con `{"active": true}`.
@@ -324,6 +338,32 @@ producto indicado.
 
 Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 
+## Asistente RAG
+
+La API incluye un asistente de compras basado en RAG (Retrieval-Augmented Generation) que responde preguntas sobre el catálogo usando solo productos reales.
+
+### Arquitectura del rag
+
+1. El usuario envía una pregunta a `POST /api/ia/ask`.
+2. Se genera un embedding de la pregunta con Ollama (`nomic-embed-text`, 768 dimensiones).
+3. PostgreSQL filtra productos activos, con stock, y con marca/categoría activas; luego ordena por similitud coseno usando el índice HNSW.
+4. Se toman los top 5 productos y se construye un prompt con nombre, descripción, especificaciones, precio (MXN) y stock.
+5. Ollama (`qwen3.5:4b`) genera una respuesta usando solo el contexto proporcionado.
+
+### Uso
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8000/api/ia/ask -Method Post -ContentType "application/json" -Body '{"query": "laptop gaming"}'
+```
+
+La respuesta incluye `answer` (texto del LLM) y `products` (lista de IDs y nombres de los productos recuperados).
+
+### Limitaciones del rag
+
+- No hay memoria de conversación: cada llamada es independiente.
+- El flag `AI_ENABLED` aún no se valida en el código.
+- Si no hay productos relevantes, la búsqueda puede retornar resultados de baja similitud (sin umbral).
+
 ### Limitaciones actuales
 
 - Las URLs generadas están firmadas y tienen una vigencia de una hora.
@@ -377,11 +417,15 @@ Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 
 ### RAG
 
-- [ ] Asesor de compras con RAG sobre el catálogo.
-- [ ] Embeddings de productos y endpoint de búsqueda semántica.
-- [ ] Respuesta del asistente con los productos recuperados.
-- [ ] Servicio Ollama opcional en Compose (profiles: ["ai"]).
-- [ ] Imagen de PostgreSQL con pgvector y migración de la extensión.
+- [x] Asesor de compras con RAG sobre el catálogo.
+- [x] Embeddings de productos y endpoint de búsqueda semántica.
+- [x] Respuesta del asistente con los productos recuperados.
+- [x] Servicio Ollama opcional en Compose (profiles: ["ai"]).
+- [x] Imagen de PostgreSQL con pgvector y migración de la extensión.
+- [ ] Memoria de conversación (multi-turno).
+- [ ] Flag `AI_ENABLED` para activar/desactivar el asistente.
+- [ ] Umbral de similitud para descartar resultados irrelevantes.
+- [ ] Tests automatizados del RAG.
 
 ### API
 
