@@ -9,11 +9,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "insecure-dev-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
-
-
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
 
 # Application definition
@@ -45,22 +43,34 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 10,
 }
 
-STORAGES = {
-    "default": {
-        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
-        "OPTIONS": {
-            "access_key": os.environ["GARAGE_ACCESS_KEY_ID"],
-            "secret_key": os.environ["GARAGE_SECRET_ACCESS_KEY"],
-            "bucket_name": os.environ["GARAGE_BUCKET_NAME"],
-            "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
-            "region_name": os.environ["GARAGE_REGION"],
-            "addressing_style": "path",
+if all(os.environ.get(k) for k in (
+    "GARAGE_ACCESS_KEY_ID", "GARAGE_SECRET_ACCESS_KEY",
+    "GARAGE_BUCKET_NAME", "GARAGE_ENDPOINT_URL", "GARAGE_REGION")):
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "OPTIONS": {
+                "access_key": os.environ["GARAGE_ACCESS_KEY_ID"],
+                "secret_key": os.environ["GARAGE_SECRET_ACCESS_KEY"],
+                "bucket_name": os.environ["GARAGE_BUCKET_NAME"],
+                "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
+                "region_name": os.environ["GARAGE_REGION"],
+                "addressing_style": "path",
+            },
         },
-    },
-    "staticfiles": {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-    },
-}
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
 
 ROOT_URLCONF = 'rag.urls'
 
@@ -88,11 +98,11 @@ WSGI_APPLICATION = 'rag.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ["POSTGRES_DB"],
-        "USER": os.environ["POSTGRES_USER"],
-        "PASSWORD": os.environ["POSTGRES_PASSWORD"],
-        "HOST": os.environ["POSTGRES_HOST"],
-        "PORT": os.environ["POSTGRES_PORT"],
+        "NAME": os.environ.get("POSTGRES_DB", "ecommerce"),
+        "USER": os.environ.get("POSTGRES_USER", "ecommerce"),
+        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "ecommerce"),
+        "HOST": os.environ.get("POSTGRES_HOST", "db"),
+        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
     }
 }
 

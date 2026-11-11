@@ -1,0 +1,29 @@
+services:
+  web:
+    depends_on:
+      garage-init:
+        condition: service_completed_successfully
+
+  ai-init:
+    build: .
+    image: rag-web:local
+    command: python manage.py embed_products
+    profiles: [ai]
+    networks: [internal]
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+      web:
+        condition: service_started
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-ecommerce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecommerce}
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce}
+      AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434}
+      AI_EMBED_MODEL: ${AI_EMBED_MODEL:-nomic-embed-text}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-qwen3.5:4b}
+    volumes:
+      - app-secrets:/secrets/app:ro
+      - s3-credentials:/secrets/s3:ro

@@ -1,53 +1,134 @@
+x-web: &web
+  build: .
+  image: rag-web:local
+  networks: [internal]
+
 services:
-  garage:
-    image: dxflrs/garage:v2.4.1
+  secrets-init:
+    <<: *web
+    command: python docker/init_secrets.py
     volumes:
-      - ./garage.toml:/etc/garage.toml:ro
-      - garage-meta:/var/lib/garage/meta
-      - garage-data:/var/lib/garage/data
-    ports:
-      - "127.0.0.1:3900:3900"
+      - garage-secrets:/secrets/garage
+      - app-secrets:/secrets/app
+    read_only: true
+    tmpfs: [/tmp]
+
   db:
     image: pgvector/pgvector:pg17
-    env_file: .env
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ecommerce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecommerce}
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce}
+    volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
-      timeout: 3s
       retries: 10
 
-  web:
-    build: .
-    env_file: .env
-    volumes:
-      - .:/app
-    ports:
-      - "127.0.0.1:8000:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  
+  garage:
+    image: dxflrs/garage:v2.4.1
+    networks: [internal]
     depends_on:
-      db:
-        condition: service_healthy
+      secrets-init: {condition: service_completed_successfully}
+    environment:
+      GARAGE_RPC_SECRET_FILE: /secrets/garage/garage_rpc_secret
+      GARAGE_ADMIN_TOKEN_FILE: /secrets/garage/garage_admin_token
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - garage-secrets:/secrets/garage:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    ports: []
+
+  garage-init:
+    <<: *web
+    command: python docker/init_garage.py
+    networks: [internal]
+    depends_on: [garage]
+    environment:
+      GARAGE_BUCKET_NAME: ${GARAGE_BUCKET_NAME:-ecommerce-images}
+      GARAGE_KEY_NAME: ${GARAGE_KEY_NAME:-django-garage-key}
+    volumes:
+      - garage-secrets:/secrets/garage:ro
+      - s3-credentials:/secrets/s3
+
+  web:
+    <<: *web
+    env_file:
+      - path: .env
+        required: false
+    entrypoint: ["/app/docker/entrypoint.sh"]
+    command: python manage.py runserver 0.0.0.0:8000
+    networks: [internal]
+    depends_on:
+      secrets-init: {condition: service_completed_successfully}
+      db: {condition: service_healthy}
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-ecommerce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecommerce}
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce}
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-admin}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-admin@example.com}
+      DJANGO_SUPERUSER_PASSWORD_FILE: /secrets/app/django_admin_password
+      SEED_DEMO: ${SEED_DEMO:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434}
+      AI_EMBED_MODEL: ${AI_EMBED_MODEL:-nomic-embed-text}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-qwen3.5:4b}
+      GARAGE_BUCKET_NAME: ${GARAGE_BUCKET_NAME:-ecommerce-images}
+      GARAGE_ENDPOINT_URL: ${GARAGE_ENDPOINT_URL:-http://garage:3900}
+      GARAGE_REGION: ${GARAGE_REGION:-garage}
+    volumes:
+      - app-secrets:/secrets/app:ro
+      - s3-credentials:/secrets/s3:ro
+    ports: ["127.0.0.1:8000:8000"]
+
   ollama:
     image: ollama/ollama:latest
-    profiles:
-      - ai
-    volumes:
-      - ollama-models:/root/.ollama
-    ports:
-      - "127.0.0.1:11434:11434"
+    profiles: [ai]
+    networks: [internal]
+    volumes: [ollama-models:/root/.ollama]
+    ports: []
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities: ["gpu"]  
+              capabilities: ["gpu"] 
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    profiles: [ai]
+    networks: [internal]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      AI_EMBED_MODEL: ${AI_EMBED_MODEL:-nomic-embed-text}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-qwen3.5:4b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'ollama pull "$$AI_EMBED_MODEL" && ollama pull "$$AI_CHAT_MODEL"'
 
 volumes:
-  pgdata:
-  garage-meta:
-  garage-data:
-  ollama-models:
+  pgdata: {}
+  garage-meta: {}
+  garage-data: {}
+  ollama-models: {}
+  garage-secrets: {}
+  app-secrets: {}
+  s3-credentials: {}
+
+networks:
+  internal:
+    driver: bridge
