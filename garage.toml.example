@@ -6,8 +6,7 @@ replication_factor = 1
 
 rpc_bind_addr = "[::]:3901"
 rpc_public_addr = "127.0.0.1:3901"
-# Genera con: openssl rand -hex 32
-rpc_secret = "CHANGE_ME"
+rpc_secret_file = "/secrets/garage/garage_rpc_secret"
 
 [s3_api]
 s3_region = "garage"
@@ -15,5 +14,4 @@ api_bind_addr = "[::]:3900"
 
 [admin]
 api_bind_addr = "[::]:3903"
-# Genera con: openssl rand -base64 32
-admin_token = "CHANGE_ME"
+admin_token_file = "/secrets/garage/garage_admin_token"
