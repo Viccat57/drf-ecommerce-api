@@ -22,7 +22,10 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 
 ## Cómo levantarlo
 
-Garage requiere una inicialización única (layout, bucket y llave de acceso), que se describe en [Inicialización de Garage](#inicialización-de-garage). Por ello, el arranque se realiza en dos fases.
+El proyecto se levanta con Docker Compose. Existen dos modos de despliegue:
+por etapas (más control) o todo-en-uno (menos comandos).
+
+### Requisitos previos
 
 1. Copia las plantillas de configuración:
 
@@ -31,62 +34,109 @@ Garage requiere una inicialización única (layout, bucket y llave de acceso), q
    cp garage.toml.example garage.toml
    ```
 
-2. Genera los secretos de `garage.toml` y reemplaza los marcadores `CHANGE_ME`. Con OpenSSL:
+2. El archivo `garage.toml` usa rutas a archivos de secretos generados
+   automáticamente; no requiere editar valores manualmente.
 
-   ```bash
-   openssl rand -hex 32      # rpc_secret
-   openssl rand -base64 32   # admin_token
+3. (Opcional) Edita `.env` para activar datos de demostración automáticos:
+
+   ```dotenv
+   SEED_DEMO=true
    ```
 
-   Si OpenSSL no está disponible, puede usarse Python:
+   Con `SEED_DEMO=true`, el arranque crea marcas, categorías y productos
+   de demostración automáticamente. Con `SEED_DEMO=false` (default),
+   puedes cargarlos después con `seed_demo`.
 
-   ```bash
-   python -c "import secrets; print(secrets.token_hex(32))"      # rpc_secret
-   python -c "import secrets; print(secrets.token_urlsafe(32))"  # admin_token
-   ```
+### Modo todo-en-uno (recomendado)
 
-3. Completa `.env` con valores propios. Las variables `GARAGE_ACCESS_KEY_ID` y `GARAGE_SECRET_ACCESS_KEY` se dejan vacías hasta el paso 5.
+Un solo comando levanta todo: secretos, base de datos, Garage, Django,
+y (con `--profile ai`) Ollama más embeddings.
 
-4. Levanta la base de datos y Garage, y sigue la guía de [Inicialización de Garage](#inicialización-de-garage):
+```bash
+docker compose -p <nombre-proyecto> -f docker-compose.yml -f compose.full.yml --profile ai up -d --build
+```
 
-   ```bash
-   docker compose up -d db garage
-   ```
+Reemplaza `<nombre-proyecto>` por un nombre fijo (por ejemplo, `ragtest`)
+para evitar conflictos si la carpeta tiene espacios o caracteres especiales.
 
-5. Registra en `.env` el identificador y el secreto de la llave generada, y levanta el resto de los servicios:
+Este comando:
 
-   ```bash
-   docker compose up --build -d
-   docker compose exec web python manage.py migrate
-   docker compose exec web python manage.py createsuperuser
-   ```
+- Genera secretos automáticamente (`init_secrets.py`).
+- Inicializa Garage (layout, bucket, llave) automáticamente (`init_garage.py`).
+- Ejecuta migraciones y crea el superusuario automáticamente.
+- Si `SEED_DEMO=true`, carga datos de demostración.
+- Si usas `--profile ai`, descarga modelos de Ollama y genera embeddings.
 
-6. Carga los datos de demostración (opcional):
+La contraseña del superusuario se genera automáticamente y se guarda en
+`/secrets/app/django_admin_password`. Para verla:
 
-   ```bash
-   docker compose exec web python manage.py seed_demo
-   ```
+```bash
+docker compose -p <nombre-proyecto> exec web cat /secrets/app/django_admin_password
+```
 
-   El comando es idempotente: puede ejecutarse varias veces sin duplicar
-   registros. Crea marcas, categorías y productos basados en artículos
-   reales; los precios son aproximados y las descripciones fueron
-   redactadas para este proyecto.
+### Modo por etapas
 
-7. (Opcional) Levanta el asistente RAG con Ollama:
+Si prefieres control paso a paso:
 
-   ```bash
-   docker compose --profile ai up -d
-   docker compose exec ollama ollama pull nomic-embed-text
-   docker compose exec ollama ollama pull qwen3.5:4b
-   docker compose exec web python manage.py embed_products
-   ```
+**Etapa 1 — API + base de datos:**
 
-   El servicio `ollama` usa el profile `ai` y requiere GPU NVIDIA configurada en Docker. Los modelos se descargan la primera vez y persisten en el volumen `ollama-models`.
+```bash
+docker compose -p <nombre-proyecto> up -d --build db web
+```
 
-8. Abre `http://localhost:8000/admin/` (panel de administración) o
-   `http://localhost:8000/api/` (API navegable).
+**Etapa 2 — Garage y conexión automática:**
 
-La base de datos no publica puertos hacia el host; solo es accesible desde la red interna de Compose. Los datos persisten en el volumen nombrado `pgdata`.
+```bash
+docker compose -p <nombre-proyecto> up -d --build garage garage-init
+Start-Sleep -Seconds 5
+docker compose -p <nombre-proyecto> up -d --no-deps --force-recreate web
+```
+
+**Etapa 3 — IA (opcional):**
+
+```bash
+docker compose -p <nombre-proyecto> --profile ai up -d --build ollama ollama-init
+Start-Sleep -Seconds 5
+docker compose -p <nombre-proyecto> exec web python manage.py embed_products
+```
+
+**Datos de demostración (opcional, en cualquier momento después de la etapa 1):**
+
+  ```bash
+  docker compose -p <nombre-proyecto> exec web python manage.py seed_demo
+  docker compose -p <nombre-proyecto> exec web python manage.py embed_products
+  ```
+
+### Nota sobre GPU
+
+El servicio `ollama` incluye un bloque `deploy` con GPU NVIDIA. En máquinas
+sin GPU, elimina o comenta ese bloque; Ollama funcionará en CPU (más lento).
+
+### Acceso
+
+- Panel de administración: `http://localhost:8000/admin/`
+- API navegable: `http://localhost:8000/api/`
+
+La base de datos no publica puertos hacia el host; solo es accesible desde
+la red interna de Compose. Los datos persisten en el volumen `pgdata`.
+
+## Datos de demostración
+
+El comando `seed_demo` crea marcas, categorías y productos de demostración.
+Es idempotente: puede ejecutarse varias veces sin duplicar registros.
+
+```bash
+docker compose -p <nombre-proyecto> exec web python manage.py seed_demo
+```
+
+Si `SEED_DEMO=true` en `.env`, el arranque automático ya lo ejecuta.
+Si `SEED_DEMO=false`, ejecútalo manualmente después de levantar `web`.
+
+Para regenerar embeddings después de crear o modificar productos:
+
+```bash
+docker compose -p <nombre-proyecto> exec web python manage.py embed_products
+```
 
 ## Pruebas
 
@@ -201,58 +251,36 @@ estáticos conservan el backend local de Django.
 
 ### Configuración local realizada
 
-1. Se añadió el servicio dxflrs/garage:v2.4.1 a Docker Compose.
-2. Se creó garage.toml con las rutas de datos y metadatos, SQLite y
-   replication_factor = 1.
-3. Se configuró y aplicó el layout inicial del nodo, con capacidad de 1G.
-4. Se creó el bucket ecommerce-images.
-5. Se creó la llave django-garage-key y se le otorgaron permisos de
-   lectura y escritura sobre ese bucket, sin permisos de propietario
-   ni de creación de buckets.
-6. Se añadieron las variables de entorno de Garage.
-7. Se configuró STORAGES en Django y se reconstruyó el servicio web.
+La configuración de Garage se realiza automáticamente al arrancar:
 
-Las credenciales reales se guardan en .env y no deben subirse al repositorio.
-El archivo garage.toml contiene secretos y tampoco debe publicarse tal cual;
-para documentarlo se debe utilizar una plantilla sin secretos reales.
+1. `init_secrets.py` genera `garage_rpc_secret`, `garage_admin_token` y
+   `django_secret_key` en `/secrets`.
+2. `init_garage.py` usa la API Admin de Garage para:
+   - Asignar capacidad al nodo y aplicar el layout.
+   - Crear el bucket `ecommerce-images`.
+   - Crear la llave `django-garage-key` con permisos de lectura y escritura.
+   - Guardar las credenciales S3 en `/secrets/s3/garage_s3.env`.
+3. El servicio `web` carga esas credenciales al arrancar.
+
+No es necesario ejecutar pasos manuales de Garage.
 
 ### Inicialización de Garage
 
-Un nodo de Garage recién creado no almacena datos hasta que se le asigna capacidad. El procedimiento siguiente se ejecuta una sola vez por cada conjunto de volúmenes y reproduce la configuración descrita en [Configuración local realizada](#configuración-local-realizada).
+La inicialización de Garage (layout, bucket y llave de acceso) se realiza
+automáticamente por el servicio `garage-init` al arrancar. No requiere
+pasos manuales.
 
-1. Obtén el identificador del nodo. Bastan los primeros 16 caracteres del campo `ID`:
+El script `docker/init_garage.py`:
 
-   ```bash
-   docker compose exec garage /garage status
-   ```
+- Detecta el identificador del nodo.
+- Asigna capacidad y aplica el layout.
+- Crea el bucket `ecommerce-images`.
+- Crea la llave `django-garage-key` con permisos de lectura y escritura.
+- Guarda las credenciales S3 en `/secrets/s3/garage_s3.env`.
 
-2. Asigna capacidad al nodo y aplica el layout:
-
-   ```bash
-   docker compose exec garage /garage layout assign -z dc1 -c 1G <ID_DEL_NODO>
-   docker compose exec garage /garage layout apply --version 1
-   ```
-
-3. Crea el bucket:
-
-   ```bash
-   docker compose exec garage /garage bucket create ecommerce-images
-   ```
-
-4. Crea la llave de acceso y otórgale permisos de lectura y escritura sobre el bucket. No se concede el permiso de propietario:
-
-   ```bash
-   docker compose exec garage /garage key create django-garage-key
-   docker compose exec garage /garage bucket allow --read --write ecommerce-images --key django-garage-key
-   ```
-
-   El comando `key create` muestra el identificador y el secreto de la llave una única vez. Si se pierde el secreto, puede consultarse con `garage key info django-garage-key --show-secret`.
-
-5. Registra ambos valores en `.env` como `GARAGE_ACCESS_KEY_ID` y `GARAGE_SECRET_ACCESS_KEY`. Si el servicio `web` ya estaba en ejecución, recréalo, porque `docker compose restart` no vuelve a leer `.env`:
-
-   ```bash
-   docker compose up -d --force-recreate web
-   ```
+El servicio `web` carga esas credenciales al arrancar (o al recrearse
+después de que Garage termine). No es necesario configurar
+`GARAGE_ACCESS_KEY_ID` ni `GARAGE_SECRET_ACCESS_KEY` manualmente.
 
 #### Verificación
 
@@ -273,16 +301,18 @@ El comando `docker compose down -v` elimina los volúmenes `pgdata`, `garage-met
 
 ### Variables de entorno
 
+Las credenciales S3 (`GARAGE_ACCESS_KEY_ID` y `GARAGE_SECRET_ACCESS_KEY`)
+se generan automáticamente por `init_garage.py` y se guardan en
+`/secrets/s3/garage_s3.env`. El servicio `web` las carga al arrancar.
+
+No es necesario configurarlas manualmente en `.env`. Las variables
+restantes tienen valores por defecto en `docker-compose.yml`:
+
 ```dotenv
-GARAGE_ACCESS_KEY_ID=
-GARAGE_SECRET_ACCESS_KEY=
 GARAGE_BUCKET_NAME=ecommerce-images
 GARAGE_ENDPOINT_URL=http://garage:3900
 GARAGE_REGION=garage
 ```
-
-Los valores vacíos son marcadores de ejemplo. En el `.env` real deben
-configurarse las credenciales S3 de la llave autorizada sobre el bucket.
 
 ### Subida de imágenes
 
@@ -363,6 +393,7 @@ La respuesta incluye `answer` (texto del LLM) y `products` (lista de IDs y nombr
 - No hay memoria de conversación: cada llamada es independiente.
 - El flag `AI_ENABLED` aún no se valida en el código.
 - Si no hay productos relevantes, la búsqueda puede retornar resultados de baja similitud (sin umbral).
+- `embed_products` recalcula todos los embeddings en cada ejecución; no es idempotente en el sentido de "saltar si ya existe".
 
 ### Limitaciones actuales
 
@@ -422,9 +453,12 @@ La respuesta incluye `answer` (texto del LLM) y `products` (lista de IDs y nombr
 - [x] Respuesta del asistente con los productos recuperados.
 - [x] Servicio Ollama opcional en Compose (profiles: ["ai"]).
 - [x] Imagen de PostgreSQL con pgvector y migración de la extensión.
+- [x] Despliegue todo-en-uno con `compose.full.yml` (Garage + IA opcionales).
+- [x] Inicialización automática de Garage (`init_garage.py`).
 - [ ] Memoria de conversación (multi-turno).
 - [ ] Flag `AI_ENABLED` para activar/desactivar el asistente.
 - [ ] Umbral de similitud para descartar resultados irrelevantes.
+- [ ] Embeddings idempotentes (saltar si ya existen).
 - [ ] Tests automatizados del RAG.
 
 ### API
