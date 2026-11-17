@@ -20,7 +20,7 @@ class BrandListTests(BaseAPITestCase):
     
     def test_get_detalle_marca_inactiva(self):
         response = self.client.get(reverse("brand-detail", args=[self.inactiva.pk]))
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
     def test_delete_marca_sin_productos(self):
         marca_productosnt = Brand.objects.create(name='sin_productos')
