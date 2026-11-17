@@ -1,5 +1,7 @@
 # API E-commerce con Django REST Framework
 
+![tests](https://github.com/Viccat57/drf-ecommerce-api/actions/workflows/test.yml/badge.svg)
+
 Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y, más adelante, un asesor de compras basado en RAG.
 
 > **Estado:**  en desarrollo. La API de catálogo, el almacenamiento de imágenes en Garage y el asistente RAG básico funcionan. Este documento solo describe lo que existe y se ha probado; lo pendiente aparece en la sección [Pendiente](#pendiente).
