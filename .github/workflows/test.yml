@@ -1,0 +1,68 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: ecommerce
+          POSTGRES_USER: ecommerce
+          POSTGRES_PASSWORD: ecommerce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ecommerce -d ecommerce"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DJANGO_SETTINGS_MODULE: rag.settings_test
+      DJANGO_SECRET_KEY: ci-only-insecure-key
+      POSTGRES_DB: ecommerce
+      POSTGRES_USER: ecommerce
+      POSTGRES_PASSWORD: ecommerce
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Confirmar pgvector disponible
+        run: |
+          PGPASSWORD=ecommerce psql -h localhost -U ecommerce -d ecommerce \
+            -c "CREATE EXTENSION IF NOT EXISTS vector" \
+            -c "SELECT extname, extversion FROM pg_extension WHERE extname='vector'"
+      - name: Chequeos de Django
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+      - name: Tests
+        run: python manage.py test --noinput -v 2
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen
+        run: docker build -t drf-ecommerce-api:ci .
