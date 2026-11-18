@@ -39,7 +39,7 @@ jobs:
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
@@ -63,6 +63,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Construir imagen
         run: docker build -t drf-ecommerce-api:ci .
