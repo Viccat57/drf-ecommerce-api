@@ -44,6 +44,12 @@ class Product(models.Model):
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     embedding = VectorField(dimensions=768, null=True, blank=True)
+    embedding_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        editable=False,
+    )
     
     def __str__(self):
         return f'{self.name} | stock: {self.stock} | ${self.price}'

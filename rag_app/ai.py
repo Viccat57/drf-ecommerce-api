@@ -4,6 +4,24 @@ import urllib.request
 from rag_app.models import Product
 from pgvector.django import CosineDistance
 from django.conf import settings
+import hashlib
+
+
+def product_embedding_text(product: Product) -> str:
+    specifications = json.dumps(
+        product.specifications,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return (
+        f"{product.name}. {product.description}. "
+        f"{specifications}. Categoría: {product.category.name}"
+    )
+
+def embedding_hash(text: str) -> str:
+    model = os.environ.get("AI_EMBED_MODEL", "nomic-embed-text")
+    content = f"{model}\n{text}"
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 def generate_embedding(text: str) -> list[float]:
     base_url = os.environ.get("AI_BASE_URL", "http://ollama:11434")
