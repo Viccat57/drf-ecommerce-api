@@ -3,6 +3,7 @@ import json
 import urllib.request
 from rag_app.models import Product
 from pgvector.django import CosineDistance
+from django.conf import settings
 
 def generate_embedding(text: str) -> list[float]:
     base_url = os.environ.get("AI_BASE_URL", "http://ollama:11434")
@@ -14,18 +15,31 @@ def generate_embedding(text: str) -> list[float]:
         data = json.loads(resp.read())
     return data["embeddings"][0]
 
-def search_products(query: str, limit: int = 5):
+def search_products(
+    query: str,
+    limit: int | None = None,
+    min_similarity: float | None = None,
+) -> list[Product]:
+    if limit is None:
+        limit = settings.AI_SEARCH_LIMIT
+
+    if min_similarity is None:
+        min_similarity = settings.AI_MIN_SIMILARITY
+
     query_embedding = generate_embedding(query)
-    return (
+
+    return list(
         Product.objects
         .filter(
             active=True,
             stock__gt=0,
             brand__active=True,
             category__active=True,
+            embedding__isnull=False,
         )
-        .annotate(distance=CosineDistance('embedding', query_embedding))
-        .order_by('distance')[:limit]
+        .annotate(distance=CosineDistance("embedding", query_embedding))
+        .filter(distance__lte=1 - min_similarity)
+        .order_by("distance")[:limit]
     )
 
 def generate_response(query: str, context: list) -> str:

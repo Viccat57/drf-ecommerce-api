@@ -79,6 +79,12 @@ class AskView(APIView):
             return Response({'error': 'query es requerido'}, status=status.HTTP_400_BAD_REQUEST)
         results = search_products(query)
         if not results:
-            return Response({'error': 'No se encontraron productos relevantes'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {
+                    "answer": "No encontré productos relacionados con tu consulta.",
+                    "products": [],
+                },
+                status=status.HTTP_200_OK,
+            )
         answer = generate_response(query, results)
         return Response({'answer': answer, 'products': [{'id': p.id, 'name': p.name} for p in results]})    
