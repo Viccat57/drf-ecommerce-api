@@ -13,6 +13,11 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "insecure-dev-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
+AI_ENABLED = os.environ.get("AI_ENABLED", "0") == "1"
+AI_MIN_SIMILARITY = float(os.environ.get("AI_MIN_SIMILARITY", "0.45"))
+AI_SEARCH_LIMIT = int(os.environ.get("AI_SEARCH_LIMIT", "5"))
+AI_HISTORY_MESSAGES = int(os.environ.get("AI_HISTORY_MESSAGES", "6"))
+
 
 # Application definition
 

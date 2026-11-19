@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from rag_app.models import Product
 from rag_app.ai import generate_embedding
@@ -6,6 +7,9 @@ class Command(BaseCommand):
     help = 'Genera y guarda embeddings para todos los productos activos'
 
     def handle(self, *args, **options):
+        if not settings.AI_ENABLED:
+            self.stderr.write('AI_ENABLED=0: no se generan embeddings.')
+            return
         products = Product.objects.filter(active=True)
         total = products.count()
         self.stdout.write(f'Procesando {total} productos...')

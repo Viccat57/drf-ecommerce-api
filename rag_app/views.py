@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rag_app.ai import search_products, generate_response
+from .permissions import AIEnabled
 
 class BrandViewSet(viewsets.ModelViewSet):
     queryset = Brand.objects.all()
@@ -71,6 +72,7 @@ class ProductImageViewSet(viewsets.ModelViewSet):
         return qs     
 
 class AskView(APIView):
+    permission_classes = [AIEnabled]
     def post(self, request):
         query = request.data.get('query')
         if not query:
