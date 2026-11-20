@@ -1,6 +1,7 @@
-from unittest.mock import patch
+import json
+from unittest.mock import patch, MagicMock
 from django.test import override_settings
-from rag_app.ai import search_products
+from rag_app.ai import search_products, build_retrieval_query, generate_response
 from .base import BaseAPITestCase, vec
 
 
@@ -29,3 +30,48 @@ class SearchProductsTests(BaseAPITestCase):
         for i in range(3):
             self.crear_producto(sku=f"s{i}", stock=1, embedding=vec(1, 0))
         self.assertEqual(len(search_products("x", limit=2)), 2)
+
+class BuildRetrievalQueryTests(BaseAPITestCase):
+    def test_sin_historial_devuelve_la_pregunta(self):
+        self.assertEqual(
+            build_retrieval_query('laptop', []),
+            'laptop',
+        )
+
+    def test_con_historial_antepone_la_ultima_pregunta(self):
+        history = [
+            {'role': 'user', 'content': 'laptop'},
+            {'role': 'assistant', 'content': 'Respuesta'},
+            {'role': 'user', 'content': '¿y el más barato?'},
+        ]
+        self.assertEqual(
+            build_retrieval_query('y la más barata?', history),
+            '¿y el más barato? y la más barata?',
+        )
+
+@patch('rag_app.ai.urllib.request.urlopen')
+class GenerateResponseHistoryTests(BaseAPITestCase):
+    def test_envia_system_historial_y_pregunta(self, urlopen):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {'message': {'content': 'Respuesta'}}
+        ).encode()
+        urlopen.return_value = response
+
+        history = [
+            {'role': 'user', 'content': 'laptop'},
+            {'role': 'assistant', 'content': 'Respuesta'},
+        ]
+        answer = generate_response('y la más barata?', [], history)
+
+        self.assertEqual(answer, 'Respuesta')
+        payload = json.loads(
+            urlopen.call_args.args[0].data.decode()
+        )
+        roles = [m['role'] for m in payload['messages']]
+        self.assertEqual(
+            roles,
+            ['system', 'user', 'assistant', 'user'],
+        )
+        self.assertIn('Contexto:', payload['messages'][-1]['content'])
+        self.assertIn('y la más barata?', payload['messages'][-1]['content'])
