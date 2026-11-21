@@ -9,6 +9,9 @@ from rag_app.ai import search_products, generate_response, build_retrieval_query
 from .permissions import AIEnabled
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+from .filters import ProductFilter
 
 class BrandViewSet(viewsets.ModelViewSet):
     queryset = Brand.objects.all()
@@ -41,22 +44,43 @@ class CategoryViewSet(viewsets.ModelViewSet):
         serializer.save()
         
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all()
-    
+    queryset = Product.objects.select_related("brand", "category")
+
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+    filterset_class = ProductFilter
+
+    search_fields = [
+        "name",
+        "description",
+        "sku",
+        "brand__name",
+        "category__name",
+    ]
+    ordering_fields = ["price", "name", "created_at", "stock", "id"]
+    ordering = ["-created_at", "id"]
+
     def get_serializer_class(self):
-        if self.action == 'list':
+        if self.action == "list":
             return ProductListSerializer
         return ProductDetailSerializer
-    
+
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.action == 'list':
+        if self.action == "list":
             qs = qs.filter(active=True)
-        return qs    
-    
+        return qs
+
     def perform_destroy(self, instance):
-        serializer = self.get_serializer(instance, data = {'active':False},partial= True)
-        serializer.is_valid(raise_exception = True)
+        serializer = self.get_serializer(
+            instance,
+            data={"active": False},
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
         serializer.save()
 
 class ProductImageViewSet(viewsets.ModelViewSet):
