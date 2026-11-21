@@ -1,4 +1,5 @@
 from decimal import Decimal
+from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 from rag_app.models import Brand, Category, Product
 
@@ -13,6 +14,14 @@ class BaseAPITestCase(APITestCase):
             name="Test_product", sku=sku, description="test product",
             price=Decimal("1.01"), brand=marca, category=categoria, **extra,
         )
+
+    def autenticar(self):
+        user = get_user_model().objects.create_user(
+            username="usuario-pruebas",
+            password="clave-solo-tests",
+        )
+        self.client.force_authenticate(user=user)
+        return user
 
 DIM = Product._meta.get_field("embedding").dimensions
 

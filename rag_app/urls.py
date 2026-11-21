@@ -1,4 +1,5 @@
 from rest_framework.routers import DefaultRouter
+from rest_framework.authtoken.views import obtain_auth_token
 from . import views
 from django.urls import path
 
@@ -9,5 +10,6 @@ router.register('products', views.ProductViewSet)
 router.register('product-images',views.ProductImageViewSet)
 
 urlpatterns = router.urls + [
+    path('auth/token', obtain_auth_token, name='auth-token'),
     path('ia/ask', views.AskView.as_view(), name='ia-ask'),
 ]
