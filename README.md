@@ -2,7 +2,7 @@
 
 ![tests](https://github.com/Viccat57/drf-ecommerce-api/actions/workflows/test.yml/badge.svg)
 
-Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y, más adelante, un asesor de compras basado en RAG.
+Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y un asesor de compras basado en RAG.
 
 > **Estado:**  en desarrollo. La API de catálogo, el almacenamiento de imágenes en Garage y el asistente RAG básico funcionan. Este documento solo describe lo que existe y se ha probado; lo pendiente aparece en la sección [Pendiente](#pendiente).
 
@@ -13,7 +13,7 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 | Python | 3.14 (imagen `python:3.14.10-slim`) |
 | Django | 6.1 |
 | Django REST framework | Paginación activada (10 por página) |
-| Base de datos | PostgreSQL 17 (contenedor `postgres:17`) |
+| Base de datos | PostgreSQL 17 con pgvector (imagen `pgvector/pgvector:pg17`) |
 | Driver | `psycopg[binary]` |
 | Imágenes | Pillow 13.0.0 (requerido por `ImageField`) |
 | Orquestación | Docker Compose (servicios `db`, `garage` y `web`) |
@@ -49,6 +49,17 @@ por etapas (más control) o todo-en-uno (menos comandos).
    de demostración automáticamente. Con `SEED_DEMO=false` (default),
    puedes cargarlos después con `seed_demo`.
 
+4. Para usar el asistente, configura en `.env` antes de arrancar:
+
+   ```dotenv
+   AI_ENABLED=1
+   AI_MIN_SIMILARITY=0.60
+   AI_HISTORY_MESSAGES=10
+   ```
+
+   El valor de ejemplo `AI_ENABLED=0` mantiene la IA desactivada. El perfil
+   `ai` inicia sus servicios, pero no sustituye esta configuración.
+
 ### Modo todo-en-uno (recomendado)
 
 Un solo comando levanta todo: secretos, base de datos, Garage, Django,
@@ -67,7 +78,15 @@ Este comando:
 - Inicializa Garage (layout, bucket, llave) automáticamente (`init_garage.py`).
 - Ejecuta migraciones y crea el superusuario automáticamente.
 - Si `SEED_DEMO=true`, carga datos de demostración.
-- Si usas `--profile ai`, descarga modelos de Ollama y genera embeddings.
+- Con `--profile ai`, `ollama-init` descarga los modelos y `ai-init` ejecuta
+  `embed_products`; para generar embeddings debes configurar `AI_ENABLED=1`
+  y contar con productos cargados.
+
+El comando con `-d` retorna antes de que termine la descarga. Revisa los logs:
+
+```bash
+docker compose -p <nombre-proyecto> -f docker-compose.yml -f compose.full.yml --profile ai logs -f ollama-init ai-init
+```
 
 La contraseña del superusuario se genera automáticamente y se guarda en
 `/secrets/app/django_admin_password`. Para verla:
@@ -98,7 +117,20 @@ docker compose -p <nombre-proyecto> up -d --no-deps --force-recreate web
 
 ```bash
 docker compose -p <nombre-proyecto> --profile ai up -d --build ollama ollama-init
-Start-Sleep -Seconds 5
+docker compose -p <nombre-proyecto> --profile ai logs -f ollama-init
+```
+
+Espera a que `ollama-init` termine correctamente: descarga los modelos
+indicados por `AI_EMBED_MODEL` y `AI_CHAT_MODEL`. Iniciar solo `ollama`
+no ejecuta `ollama-init`; declarar el nombre de un modelo no lo descarga.
+Una espera fija de cinco segundos no garantiza que la descarga termine.
+
+Si activaste la IA en `.env` después de iniciar `web`, recréalo para tomar
+las variables nuevas. Luego verifica los modelos y genera embeddings:
+
+```bash
+docker compose -p <nombre-proyecto> up -d --no-deps --force-recreate web
+docker compose -p <nombre-proyecto> exec ollama ollama list
 docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 ```
 
@@ -142,14 +174,29 @@ docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 
 ## Pruebas
 
-Las pruebas usan `APITestCase` y una base de datos temporal que Django crea y elimina por sí mismo, sin afectar a los datos de desarrollo. Con los servicios levantados:
+La suite validada localmente contiene 49 tests. Usa una base temporal que
+Django crea y elimina; no utiliza Ollama real porque las llamadas de IA se
+simulan en los tests.
+
+Levanta la base de datos y reconstruye la imagen después de cambiar código
+si no tienes un bind mount:
 
 ```bash
-docker compose exec web python manage.py test
-docker compose exec web python manage.py test rag_app.tests.test_brand -v 2
+docker compose up -d db
+docker compose build web
+docker compose run --rm --no-deps --entrypoint= -e DJANGO_SETTINGS_MODULE=rag.settings_test web python manage.py test --noinput -v 2
+docker compose run --rm --no-deps --entrypoint= -e DJANGO_SETTINGS_MODULE=rag.settings_test web python manage.py makemigrations --check --dry-run
 ```
 
-**Cobertura actual**: reglas de Brand y Category en la API, y reglas de integridad de Category en la base de datos y el ORM. Product e imágenes están pendientes.
+La configuración `rag.settings_test` usa almacenamiento de pruebas y evita
+el script de arranque con `--entrypoint=`. Si usas `-p <nombre-proyecto>`,
+conserva ese mismo nombre en todos los comandos.
+
+Cobertura actual: reglas de Brand y Category, integridad de Category,
+búsqueda vectorial y umbral, flag de IA, embeddings idempotentes y `--force`,
+memoria multi-turno, construcción de mensajes para Ollama y exclusión de los
+campos internos del serializer de detalle. La cobertura completa de Product
+e imágenes sigue pendiente.
 
 Para reiniciar los datos de desarrollo sin afectar Garage, se puede
 vaciar la base de datos y volver a cargar el catálogo de demostración:
@@ -176,7 +223,7 @@ sin referencia en la base de datos.
 | `/api/products/<id>` | GET, PUT, PATCH, DELETE | El detalle incluye también los productos inactivos |
 | `/api/product-images` | GET, POST | Lista registros de imágenes y permite subir archivos mediante multipart/form-data |
 | `/api/product-images/<id>` | GET, PUT, PATCH, DELETE | Consulta y modifica un registro de imagen; DELETE realiza borrado real de la fila |
-| `/api/ia/ask` | POST | Asistente RAG: recibe `{"query": "..."}` y retorna una recomendación basada en el catálogo |
+| `/api/ia/ask` | POST | Recibe `query` y `conversation_id` opcional; devuelve `conversation_id`, `answer` y `products` |
 
 En marcas, categorías y productos, `DELETE` realiza **borrado lógico**
 (`active = false`). Para reactivar, se utiliza `PATCH` con `{"active": true}`.
@@ -191,6 +238,8 @@ del archivo correspondiente en Garage todavía no está implementada.
 - **Product**: precio `Decimal(10,2)`, stock, especificaciones en `JSONB` y estado `active`.
 - **ProductImage**: imagen mediante `ImageField`, relación con producto y marca de imagen principal. Cuenta con endpoints.
 - **ProductReview**: calificación de 1 a 5, ligada a un producto y a un usuario. Todavía no tiene endpoints.
+- **Conversation**: conversación persistente identificada mediante UUID.
+- **Message**: pregunta o respuesta asociada a una conversación, con IDs de productos recuperados en la respuesta.
 
 ## Reglas de integridad
 
@@ -372,30 +421,135 @@ Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
 
 ## Asistente RAG
 
-La API incluye un asistente de compras basado en RAG (Retrieval-Augmented Generation) que responde preguntas sobre el catálogo usando solo productos reales.
+El asistente recupera productos del catálogo y construye una respuesta con
+Ollama. El prompt exige usar el contexto actual, conservar precios exactos
+y no inventar características; estas instrucciones no garantizan que el
+modelo esté libre de errores.
 
-### Arquitectura del rag
+### Configuración
 
-1. El usuario envía una pregunta a `POST /api/ia/ask`.
-2. Se genera un embedding de la pregunta con Ollama (`nomic-embed-text`, 768 dimensiones).
-3. PostgreSQL filtra productos activos, con stock, y con marca/categoría activas; luego ordena por similitud coseno usando el índice HNSW.
-4. Se toman los top 5 productos y se construye un prompt con nombre, descripción, especificaciones, precio (MXN) y stock.
-5. Ollama (`qwen3.5:4b`) genera una respuesta usando solo el contexto proporcionado.
+Valores de ejemplo de `.env.example`:
+
+```dotenv
+AI_BASE_URL=http://ollama:11434
+AI_EMBED_MODEL=nomic-embed-text
+AI_CHAT_MODEL=qwen3.5:4b
+AI_ENABLED=0
+AI_MIN_SIMILARITY=0.60
+AI_SEARCH_LIMIT=5
+AI_HISTORY_MESSAGES=10
+```
+
+Configura `AI_ENABLED=1` para habilitar el endpoint y el comando de embeddings.
+Con `AI_ENABLED=0`, el endpoint responde 503 y `embed_products` no genera
+vectores. Cambiar `.env.example` no modifica tu `.env` local. Después de
+cambiar variables del servicio, recréalo para que las lea.
+
+### Arquitectura del RAG
+
+1. El cliente envía `query` y, opcionalmente, `conversation_id`.
+2. Se crea o recupera una `Conversation` de PostgreSQL y se leen los mensajes
+   recientes. `Message` guarda rol, contenido e IDs de productos asociados.
+3. `build_retrieval_query` antepone la última pregunta del usuario a la actual
+   cuando existe historial. No hace una llamada adicional al LLM.
+4. Ollama genera el embedding de esa consulta con `nomic-embed-text`
+   (768 dimensiones).
+5. Se consideran productos activos, con stock, marca y categoría activas y
+   embedding no nulo. La consulta calcula distancia coseno mediante pgvector;
+   el modelo dispone de un índice HNSW, aunque el plan de ejecución concreto
+   lo decide PostgreSQL.
+6. Se filtra por `similitud = 1 - distancia coseno`, aplicando el mínimo
+   configurado antes de ordenar y limitar a `AI_SEARCH_LIMIT` productos.
+7. Si hay resultados, se envían a Ollama las instrucciones `system`, el
+   historial reciente y la pregunta con el contexto actual: nombre,
+   descripción, especificaciones, precio en MXN y stock.
+8. Si no hay resultados, se devuelve un mensaje fijo sin llamar al modelo
+   de chat. En ambos casos se guardan la pregunta y la respuesta.
+
+`AI_HISTORY_MESSAGES=10` permite reenviar hasta cinco turnos previos completos
+(pregunta y respuesta). No limita el número total de preguntas: los mensajes
+antiguos permanecen en PostgreSQL, pero salen de la ventana enviada al modelo.
+El cliente debe reutilizar el UUID para continuar la conversación.
 
 ### Uso
 
-```powershell
-Invoke-RestMethod -Uri http://localhost:8000/api/ia/ask -Method Post -ContentType "application/json" -Body '{"query": "laptop gaming"}'
+Envía a `POST http://localhost:8000/api/ia/ask`, con `Content-Type: application/json`,
+este cuerpo desde Postman (Body > raw > JSON):
+
+```json
+{
+  "query": "laptop para programar"
+}
 ```
 
-La respuesta incluye `answer` (texto del LLM) y `products` (lista de IDs y nombres de los productos recuperados).
+La respuesta incluye `conversation_id`, `answer` y `products` (IDs y nombres
+de los productos recuperados). Copia el UUID devuelto y continúa con:
 
-### Limitaciones del rag
+```json
+{
+  "query": "¿y la más barata?",
+  "conversation_id": "PEGA_AQUI_EL_UUID_DEVUELTO"
+}
+```
 
-- No hay memoria de conversación: cada llamada es independiente.
-- El flag `AI_ENABLED` aún no se valida en el código.
-- Si no hay productos relevantes, la búsqueda puede retornar resultados de baja similitud (sin umbral).
-- `embed_products` recalcula todos los embeddings en cada ejecución; no es idempotente en el sentido de "saltar si ya existe".
+No envíes ese marcador literalmente: sustitúyelo por el UUID real. Omite
+`conversation_id` para iniciar otro chat. Un ID inexistente o mal formado
+no vacío devuelve 404; una petición sin pregunta devuelve 400.
+
+Sin resultados, el endpoint responde 200 con el UUID de la conversación,
+`products: []` y el texto exacto:
+
+```text
+No encontré productos relacionados con tu consulta.
+```
+
+### Embeddings idempotentes
+
+```bash
+docker compose -p <nombre-proyecto> exec web python manage.py embed_products
+docker compose -p <nombre-proyecto> exec web python manage.py embed_products --force
+```
+
+El comando procesa productos activos. Omite un producto cuando ya tiene un
+vector y su `embedding_hash` coincide con el hash calculado. `--force` obliga
+a regenerarlo. Un vector ausente se genera aunque coincida el hash.
+
+El hash SHA-256 combina el nombre del modelo de embeddings y el texto del
+producto: nombre, descripción, especificaciones JSON ordenadas y categoría.
+No es un hash del vector. Cambiar ese texto o el nombre del modelo provoca
+regeneración en la siguiente ejecución. Un nuevo modelo debe ser compatible
+con las 768 dimensiones del campo; cambiar el hash no adapta el esquema.
+
+Editar productos no recalcula automáticamente sus embeddings: vuelve a
+correr el comando. Los campos internos `embedding` y `embedding_hash` no se
+exponen en el serializer de detalle público del producto.
+
+### Validación manual local
+
+Se generaron embeddings para 13 productos y se probaron consultas de laptops,
+una continuación sobre la opción más barata, audífonos y una consulta ajena
+al catálogo. Con el umbral 0.60, la prueba de audífonos recuperó los dos
+productos pertinentes y la de casa voladora activó la respuesta vacía.
+También se verificaron el precio exacto de la Vivobook S16 y la ausencia de
+campos internos en el GET de detalle. Son comprobaciones locales, no una
+medición general de calidad.
+
+### Limitaciones del RAG
+
+- El umbral 0.60 se probó con el catálogo local; no garantiza relevancia para
+  todas las consultas. La recuperación puede incluir otras categorías.
+- “El más barato” se refiere a los productos del contexto recuperado, no
+  necesariamente a todo el catálogo. La búsqueda semántica no ordena precios.
+- La consulta de recuperación solo antepone la última pregunta: no realiza
+  una reformulación completa de conversaciones largas.
+- Limitar el número de mensajes no garantiza un máximo de tokens. También
+  cuentan la longitud del historial, los productos y la respuesta.
+- El prompt no elimina todos los errores, contradicciones o afirmaciones
+  sin respaldo del modelo.
+- El asistente no tiene autenticación ni aislamiento por propietario de
+  conversación; el UUID no sustituye autorización. Mantener el uso local.
+- Los errores de Ollama todavía pueden propagarse como 500; no hay manejo
+  completo de fallos del proveedor.
 
 ### Limitaciones actuales
 
@@ -418,7 +572,7 @@ La respuesta incluye `answer` (texto del LLM) y `products` (lista de IDs y nombr
 - **Sin autenticación ni permisos**: cualquier cliente que llegue al puerto 8000 puede leer y escribir. El puerto se publica solo en 127.0.0.1, por lo que únicamente es accesible desde la propia máquina.
 - **Las validaciones de la API solo aplican a la API**: el panel de administración, el shell y los scripts no pasan por los serializers. El caso más delicado son los ciclos de categorías; la base solo bloquea la autorreferencia directa. Una posible solución sería mover la regla a `Category.clean()`, pero se mantuvo simple.
 - **Reactivación de categorías sin comprobar el padre**: un `PATCH` con `active: true` no verifica que la categoría padre esté activa. La reactivación de productos sí comprueba que su marca y categoría efectivas estén activas.
-- **Pruebas automáticas parciales**: cubren Brand y Category; Product e imágenes pendientes.
+- **Pruebas automáticas parciales**: cubren Brand, Category, el pipeline RAG y la exclusión de campos internos del detalle de Product; la cobertura completa de Product e imágenes sigue pendiente.
 
 ## Seguridad
 
@@ -457,11 +611,11 @@ La respuesta incluye `answer` (texto del LLM) y `products` (lista de IDs y nombr
 - [x] Imagen de PostgreSQL con pgvector y migración de la extensión.
 - [x] Despliegue todo-en-uno con `compose.full.yml` (Garage + IA opcionales).
 - [x] Inicialización automática de Garage (`init_garage.py`).
-- [ ] Memoria de conversación (multi-turno).
-- [ ] Flag `AI_ENABLED` para activar/desactivar el asistente.
-- [ ] Umbral de similitud para descartar resultados irrelevantes.
-- [ ] Embeddings idempotentes (saltar si ya existen).
-- [ ] Tests automatizados del RAG.
+- [x] Memoria de conversación (multi-turno).
+- [x] Flag `AI_ENABLED` para activar/desactivar el asistente.
+- [x] Umbral de similitud para descartar resultados irrelevantes.
+- [x] Embeddings idempotentes (saltar si ya existen).
+- [x] Tests automatizados del RAG.
 
 ### API
 
