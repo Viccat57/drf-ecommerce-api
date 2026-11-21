@@ -11,6 +11,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
+from rest_framework.permissions import IsAuthenticated
 from .filters import ProductFilter
 
 class BrandViewSet(viewsets.ModelViewSet):
@@ -98,7 +99,7 @@ class ProductImageViewSet(viewsets.ModelViewSet):
         return qs     
 
 class AskView(APIView):
-    permission_classes = [AIEnabled]
+    permission_classes = [IsAuthenticated, AIEnabled]
 
     def post(self, request):
         query = request.data.get('query')
@@ -111,14 +112,14 @@ class AskView(APIView):
         conversation_id = request.data.get('conversation_id')
         if conversation_id:
             try:
-                conversation = Conversation.objects.get(pk=conversation_id)
+                conversation = Conversation.objects.get(pk=conversation_id, user=request.user,)
             except (Conversation.DoesNotExist, DjangoValidationError, ValueError):
                 return Response(
                     {'error': 'conversation_id inválido'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
         else:
-            conversation = Conversation.objects.create()
+            conversation = Conversation.objects.create(user=request.user)
 
         recent = list(
             conversation.messages.order_by('-id')[:settings.AI_HISTORY_MESSAGES]
