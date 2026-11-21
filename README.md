@@ -4,7 +4,30 @@
 
 Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y un asesor de compras basado en RAG.
 
-> **Estado:**  en desarrollo. La API de catálogo, el almacenamiento de imágenes en Garage y el asistente RAG básico funcionan. Este documento solo describe lo que existe y se ha probado; lo pendiente aparece en la sección [Pendiente](#pendiente).
+> Estado: en desarrollo. Funcionan la API de catálogo con filtros y búsqueda,
+> la autenticación por token, el almacenamiento de imágenes en Garage y el
+> asistente RAG con memoria de conversación y aislamiento por usuario.
+> Este documento describe lo implementado y validado localmente; las tareas
+> pendientes aparecen en [Pendiente](#pendiente).
+
+## Contenido
+
+- [Stack](#stack)
+- [Cómo levantarlo](#cómo-levantarlo)
+- [Datos de demostración](#datos-de-demostración)
+- [Pruebas](#pruebas)
+- [Autenticación y alcance](#autenticación-y-alcance)
+- [Endpoints disponibles](#endpoints-disponibles)
+- [Filtros y búsqueda de productos](#filtros-y-búsqueda-de-productos)
+- [Modelos](#modelos)
+- [Reglas de integridad](#reglas-de-integridad)
+- [Decisiones de diseño](#decisiones-de-diseño)
+- [Almacenamiento de imágenes con Garage](#almacenamiento-de-imágenes-con-garage)
+- [Asistente RAG](#asistente-rag)
+- [Limitaciones del almacenamiento de imágenes](#limitaciones-del-almacenamiento-de-imágenes)
+- [Limitaciones conocidas](#limitaciones-conocidas)
+- [Seguridad](#seguridad)
+- [Pendiente](#pendiente)
 
 ## Stack
 
@@ -21,6 +44,8 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 | IA local | Ollama (embeddings con `nomic-embed-text`, chat con `qwen3.5:4b`) |
 | Almacenamiento de imágenes | Garage v2.4.1, compatible con S3 |
 | Integración | django-storages[s3]==1.14.6 |
+| Filtros de catálogo | django-filter==26.2 |
+| Autenticación de la API | TokenAuthentication de Django REST framework |
 
 ## Cómo levantarlo
 
@@ -95,6 +120,17 @@ La contraseña del superusuario se genera automáticamente y se guarda en
 docker compose -p <nombre-proyecto> exec web cat /secrets/app/django_admin_password
 ```
 
+La contraseña del archivo corresponde a la generada por la inicialización.
+Si cambiaste la contraseña de la cuenta posteriormente, utiliza la nueva.
+Para restablecerla sin borrar datos:
+
+```powershell
+docker compose -p <nombre-proyecto> exec web python manage.py changepassword TU_USUARIO_ADMIN
+```
+
+Sustituye `TU_USUARIO_ADMIN` por el nombre real de la cuenta; no es
+necesariamente `root`.
+
 ### Modo por etapas
 
 Si prefieres control paso a paso:
@@ -107,7 +143,7 @@ docker compose -p <nombre-proyecto> up -d --build db web
 
 **Etapa 2 — Garage y conexión automática:**
 
-```bash
+```powershell
 docker compose -p <nombre-proyecto> up -d --build garage garage-init
 Start-Sleep -Seconds 5
 docker compose -p <nombre-proyecto> up -d --no-deps --force-recreate web
@@ -137,9 +173,9 @@ docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 **Datos de demostración (opcional, en cualquier momento después de la etapa 1):**
 
   ```bash
-  docker compose -p <nombre-proyecto> exec web python manage.py seed_demo
-  docker compose -p <nombre-proyecto> exec web python manage.py embed_products
-  ```
+docker compose -p <nombre-proyecto> exec web python manage.py seed_demo
+docker compose -p <nombre-proyecto> exec web python manage.py embed_products
+```
 
 ### Nota sobre GPU
 
@@ -174,7 +210,7 @@ docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 
 ## Pruebas
 
-La suite validada localmente contiene 49 tests. Usa una base temporal que
+La suite validada localmente contiene 75 tests. Usa una base temporal que
 Django crea y elimina; no utiliza Ollama real porque las llamadas de IA se
 simulan en los tests.
 
@@ -184,19 +220,25 @@ si no tienes un bind mount:
 ```bash
 docker compose up -d db
 docker compose build web
-docker compose run --rm --no-deps --entrypoint= -e DJANGO_SETTINGS_MODULE=rag.settings_test web python manage.py test --noinput -v 2
-docker compose run --rm --no-deps --entrypoint= -e DJANGO_SETTINGS_MODULE=rag.settings_test web python manage.py makemigrations --check --dry-run
+
+docker compose run --rm --no-deps -e DJANGO_SETTINGS_MODULE=rag.settings_test --entrypoint python web manage.py test --noinput -v 2
+
+docker compose run --rm --no-deps -e DJANGO_SETTINGS_MODULE=rag.settings_test --entrypoint python web manage.py makemigrations --check --dry-run
 ```
 
-La configuración `rag.settings_test` usa almacenamiento de pruebas y evita
-el script de arranque con `--entrypoint=`. Si usas `-p <nombre-proyecto>`,
-conserva ese mismo nombre en todos los comandos.
+La configuración `rag.settings_test` usa almacenamiento de pruebas.
+`--entrypoint python` evita ejecutar el script habitual de arranque.
+Si usas `-p <nombre-proyecto>`, conserva ese mismo nombre en todos los comandos.
 
 Cobertura actual: reglas de Brand y Category, integridad de Category,
-búsqueda vectorial y umbral, flag de IA, embeddings idempotentes y `--force`,
-memoria multi-turno, construcción de mensajes para Ollama y exclusión de los
-campos internos del serializer de detalle. La cobertura completa de Product
-e imágenes sigue pendiente.
+filtros y búsqueda de productos, orden y paginación, autenticación por
+token, rechazo de escrituras anónimas, búsqueda vectorial y umbral,
+flag de IA, embeddings idempotentes y `--force`, memoria multi-turno,
+asignación de propietario a las conversaciones, rechazo de conversaciones
+ajenas o sin dueño, construcción de mensajes para Ollama y exclusión de
+campos internos del serializer de detalle.
+
+La cobertura completa del CRUD de Product e imágenes sigue pendiente.
 
 Para reiniciar los datos de desarrollo sin afectar Garage, se puede
 vaciar la base de datos y volver a cargar el catálogo de demostración:
@@ -207,9 +249,72 @@ docker compose exec web python manage.py createsuperuser
 docker compose exec web python manage.py seed_demo
 ```
 
-`flush` elimina todas las filas de PostgreSQL, incluido el superusuario.
+`flush` vacía los datos de la base configurada, incluidos los usuarios,
+tokens y conversaciones. No es necesario para ejecutar las pruebas ni
+para aplicar las migraciones de esta fase.
 Los archivos ya subidos a Garage permanecen en el bucket, pero quedan
 sin referencia en la base de datos.
+
+## Autenticación y alcance
+
+La API utiliza `TokenAuthentication` de Django REST framework.
+
+- La lectura del catálogo y de sus registros de imágenes es pública.
+- Crear, modificar y eliminar registros del catálogo requiere autenticación.
+- Cualquier usuario autenticado puede modificar cualquier registro del
+  catálogo: no existen roles ni propiedad de productos.
+- El asistente requiere autenticación y cada usuario solo puede continuar
+  sus propias conversaciones.
+
+### Obtener un token
+
+Las cuentas se crean desde Django Admin o mediante herramientas de
+administración de Django. No hay endpoint público de registro.
+
+Envía a `POST /api/auth/token`, con `Content-Type: application/json`:
+
+```json
+{
+  "username": "TU_USUARIO",
+  "password": "TU_CONTRASEÑA"
+}
+```
+
+Con credenciales válidas, la respuesta incluye:
+
+```json
+{
+  "token": "TOKEN_DEVUELTO"
+}
+```
+
+En las peticiones autenticadas, envía:
+
+```http
+Authorization: Token TOKEN_DEVUELTO
+```
+
+No uses el prefijo `Bearer`. No guardes tokens ni contraseñas en el
+repositorio ni los compartas en capturas.
+
+### Decisiones de alcance
+
+Este proyecto se centra en integrar IA mediante RAG en una API y en
+gestionar imágenes con almacenamiento S3-compatible.
+
+La autorización del catálogo se limita deliberadamente a lectura pública
+y escritura autenticada. No se implementan roles, grupos de negocio ni
+propiedad de productos. Por tanto, una cuenta autenticada puede modificar
+registros creados por otra cuenta. Es una decisión de alcance, no una
+garantía de autorización adecuada para una tienda multiusuario real.
+
+Las conversaciones sí se aíslan por usuario porque forman parte del
+historial personal del asistente. Conocer un UUID no concede acceso:
+la API comprueba también el propietario.
+
+Este aislamiento se aplica al endpoint del chat. No implica cifrado de
+mensajes ni impide el acceso desde Django Admin a administradores con
+los permisos correspondientes.
 
 ## Endpoints disponibles
 
@@ -223,13 +328,54 @@ sin referencia en la base de datos.
 | `/api/products/<id>` | GET, PUT, PATCH, DELETE | El detalle incluye también los productos inactivos |
 | `/api/product-images` | GET, POST | Lista registros de imágenes y permite subir archivos mediante multipart/form-data |
 | `/api/product-images/<id>` | GET, PUT, PATCH, DELETE | Consulta y modifica un registro de imagen; DELETE realiza borrado real de la fila |
-| `/api/ia/ask` | POST | Recibe `query` y `conversation_id` opcional; devuelve `conversation_id`, `answer` y `products` |
+| `/api/ia/ask` | POST | Requiere token; recibe `query` y `conversation_id` opcional; solo permite continuar conversaciones propias |
+| `/api/auth/token` | POST | Obtiene un token con credenciales de una cuenta existente |
+
+Las rutas de la API se usan sin barra final. La lectura del catálogo es
+pública; sus operaciones de escritura requieren el encabezado
+`Authorization: Token <token>`.
 
 En marcas, categorías y productos, `DELETE` realiza **borrado lógico**
 (`active = false`). Para reactivar, se utiliza `PATCH` con `{"active": true}`.
 
 En imágenes, `DELETE` elimina la fila de ProductImage. La eliminación
 del archivo correspondiente en Garage todavía no está implementada.
+
+## Filtros y búsqueda de productos
+
+`GET /api/products` admite parámetros combinables:
+
+## Filtros y búsqueda de productos
+
+`GET /api/products` admite los siguientes parámetros combinables:
+
+| Parámetro | Comportamiento |
+| --- | --- |
+| `brand` | Filtra por ID de marca |
+| `category` | Filtra por ID de categoría e incluye sus descendientes |
+| `min_price` | Precio mínimo, incluido |
+| `max_price` | Precio máximo, incluido |
+| `in_stock=true` | Solo productos con stock mayor que cero |
+| `in_stock=false` | Solo productos con stock igual a cero |
+| `search` | Busca en nombre, descripción, SKU, nombre de marca y nombre de categoría |
+| `ordering` | Ordena por `price`, `name`, `created_at`, `stock` o `id`; el prefijo `-` invierte el orden |
+| `page` | Selecciona una página de resultados |
+
+Ejemplo:
+
+```http
+GET /api/products?search=monitor&min_price=1000&max_price=5000&in_stock=true&ordering=price
+```
+
+El listado mantiene la restricción de productos activos y una paginación
+de 10 elementos. El orden predeterminado es `-created_at,id`.
+
+Los parámetros `brand` y `category` deben identificar registros existentes;
+los valores inválidos devuelven `400`.
+
+Estos filtros son independientes de la recuperación semántica del RAG.
+El endpoint del chat no aplica automáticamente los parámetros del listado
+ni garantiza encontrar el producto más barato de todo el catálogo.
 
 ## Modelos
 
@@ -238,7 +384,7 @@ del archivo correspondiente en Garage todavía no está implementada.
 - **Product**: precio `Decimal(10,2)`, stock, especificaciones en `JSONB` y estado `active`.
 - **ProductImage**: imagen mediante `ImageField`, relación con producto y marca de imagen principal. Cuenta con endpoints.
 - **ProductReview**: calificación de 1 a 5, ligada a un producto y a un usuario. Todavía no tiene endpoints.
-- **Conversation**: conversación persistente identificada mediante UUID.
+- **Conversation**: conversación persistente identificada mediante UUID y asociada a un usuario. El campo admite NULL para conservar conversaciones anteriores a la incorporación de autenticación; esas conversaciones no pueden continuarse desde la API.
 - **Message**: pregunta o respuesta asociada a una conversación, con IDs de productos recuperados en la respuesta.
 
 ## Reglas de integridad
@@ -259,7 +405,8 @@ Las reglas viven en tres capas, porque cada una protege contra cosas distintas.
 
 - `PROTECT`: una marca o categoría con productos no se puede borrar; una categoría con subcategorías tampoco.
 - `CASCADE`: al borrar realmente un producto desde el ORM se eliminan sus
-  registros de imágenes y reseñas; al borrar un usuario, sus reseñas.
+  registros de imágenes y reseñas; al borrar un usuario, sus reseñas y
+  conversaciones. Al borrar una conversación se eliminan sus mensajes.
   Esto no elimina automáticamente los archivos almacenados en Garage.
 
 ### 3. API (serializers de Brand, Category y Product)
@@ -337,12 +484,11 @@ después de que Garage termine). No es necesario configurar
 
 Sube una imagen a un producto existente mediante `multipart/form-data`. En PowerShell, utiliza `curl.exe`:
 
-```bash
-curl -X POST http://localhost:8000/api/product-images \
-  -F "product=1" \
-  -F "image=@foto.jpg" \
-  -F "is_primary=true"
+```powershell
+curl.exe -X POST http://localhost:8000/api/product-images -H "Authorization: Token TU_TOKEN" -F "product=1" -F "image=@foto.jpg" -F "is_primary=true"
 ```
+
+`TU_TOKEN` y el ID del producto deben sustituirse por valores reales.
 
 La respuesta esperada es `201 Created`. Puede confirmarse la existencia del bucket y de la llave con `garage bucket list` y `garage key list`.
 
@@ -375,7 +521,9 @@ La creación de imágenes requiere un formulario `multipart/form-data` con:
 - `image`: archivo de imagen.
 - `is_primary`: booleano opcional; el valor predeterminado es `false`.
 
-Puede probarse desde el formulario de la API navegable de DRF.
+Para subir imágenes utiliza Postman o curl con un token. Iniciar sesión
+en Django Admin no autentica por sí solo las escrituras de la API, que
+está configurada con TokenAuthentication.
 
 El listado consulta los registros de PostgreSQL, no enumera directamente
 todos los objetos del bucket.
@@ -411,8 +559,9 @@ producto indicado.
 
 - Escritura, comprobación de existencia y lectura de un objeto desde
   default_storage.
-- Subida de una imagen real mediante la API navegable de DRF, con
-  respuesta 201 Created.
+- Antes de incorporar autenticación por token, se verificó la subida de
+  una imagen real mediante la API navegable de DRF, con respuesta 201 Created.
+  El procedimiento actual requiere enviar un token desde Postman o curl.
 - Creación de una segunda imagen principal para el mismo producto:
   la anterior quedó con is_primary=false y la nueva con is_primary=true.
 - Subida de imágenes con Pillow 13.0.0 respondió `201 Created`.
@@ -440,16 +589,25 @@ AI_SEARCH_LIMIT=5
 AI_HISTORY_MESSAGES=10
 ```
 
-Configura `AI_ENABLED=1` para habilitar el endpoint y el comando de embeddings.
-Con `AI_ENABLED=0`, el endpoint responde 503 y `embed_products` no genera
-vectores. Cambiar `.env.example` no modifica tu `.env` local. Después de
-cambiar variables del servicio, recréalo para que las lea.
+Configura `AI_ENABLED=1` para habilitar el asistente y el comando de
+embeddings. El endpoint del chat requiere además autenticación.
+
+Para una petición con token válido, `AI_ENABLED=0` devuelve 503.
+Una petición anónima devuelve 401 antes de comprobar ese flag.
+Con `AI_ENABLED=0`, `embed_products` no genera vectores.
+
+Cambiar `.env.example` no modifica tu `.env` local. Después de cambiar
+variables del servicio, recréalo para que las lea.
 
 ### Arquitectura del RAG
 
-1. El cliente envía `query` y, opcionalmente, `conversation_id`.
-2. Se crea o recupera una `Conversation` de PostgreSQL y se leen los mensajes
-   recientes. `Message` guarda rol, contenido e IDs de productos asociados.
+1. El cliente envía un token válido, `query` y, opcionalmente,
+   `conversation_id`.
+2. Se crea una Conversation asociada al usuario autenticado o se recupera
+   una existente que pertenezca a ese mismo usuario. Un UUID ajeno,
+   inexistente o sin propietario no permite continuar el chat y devuelve
+   404. Después se leen los mensajes recientes de esa conversación.
+   Message guarda rol, contenido e IDs de productos asociados.
 3. `build_retrieval_query` antepone la última pregunta del usuario a la actual
    cuando existe historial. No hace una llamada adicional al LLM.
 4. Ollama genera el embedding de esa consulta con `nomic-embed-text`
@@ -473,8 +631,9 @@ El cliente debe reutilizar el UUID para continuar la conversación.
 
 ### Uso
 
-Envía a `POST http://localhost:8000/api/ia/ask`, con `Content-Type: application/json`,
-este cuerpo desde Postman (Body > raw > JSON):
+Envía este cuerpo a `POST http://localhost:8000/api/ia/ask` desde
+Postman (Body > raw > JSON), con los encabezados
+`Content-Type: application/json` y `Authorization: Token TU_TOKEN`:
 
 ```json
 {
@@ -492,9 +651,13 @@ de los productos recuperados). Copia el UUID devuelto y continúa con:
 }
 ```
 
-No envíes ese marcador literalmente: sustitúyelo por el UUID real. Omite
-`conversation_id` para iniciar otro chat. Un ID inexistente o mal formado
-no vacío devuelve 404; una petición sin pregunta devuelve 400.
+Sustituye el marcador por el UUID real y conserva el token del propietario
+para continuar el chat. Omite `conversation_id` para iniciar otra
+conversación asociada al usuario autenticado.
+
+Una petición anónima devuelve 401. Con autenticación válida y la IA
+habilitada, un ID inexistente, ajeno, sin dueño o mal formado no vacío
+devuelve 404; una petición sin pregunta devuelve 400.
 
 Sin resultados, el endpoint responde 200 con el UUID de la conversación,
 `products: []` y el texto exacto:
@@ -534,6 +697,20 @@ También se verificaron el precio exacto de la Vivobook S16 y la ausencia de
 campos internos en el GET de detalle. Son comprobaciones locales, no una
 medición general de calidad.
 
+También se comprobó manualmente en Postman:
+
+- Lectura pública del catálogo: 200.
+- Escritura anónima del catálogo: 401.
+- Uso anónimo del chat: 401.
+- Creación y continuación del chat por su propietario: 200, conservando
+  el mismo conversation_id al continuar.
+- Intento de continuar ese chat con otro usuario: 404.
+- Creación de un chat nuevo con el segundo usuario: 200 y otro UUID.
+
+Estas comprobaciones verifican el comportamiento de autenticación y
+aislamiento en los casos probados. No constituyen una auditoría de
+seguridad ni una evaluación general de calidad del modelo.
+
 ### Limitaciones del RAG
 
 - El umbral 0.60 se probó con el catálogo local; no garantiza relevancia para
@@ -546,12 +723,20 @@ medición general de calidad.
   cuentan la longitud del historial, los productos y la respuesta.
 - El prompt no elimina todos los errores, contradicciones o afirmaciones
   sin respaldo del modelo.
-- El asistente no tiene autenticación ni aislamiento por propietario de
-  conversación; el UUID no sustituye autorización. Mantener el uso local.
+- Las conversaciones anteriores a la migración 0006 pueden conservar
+  user=NULL y no son accesibles desde el endpoint del chat.
+- El aislamiento por usuario se aplica a la API, no frente a
+  administradores con acceso autorizado a Django Admin o PostgreSQL.
 - Los errores de Ollama todavía pueden propagarse como 500; no hay manejo
   completo de fallos del proveedor.
+- En una prueba manual con lenguaje coloquial
+  ("monitor para chambear de chill"), el asistente recuperó monitores
+  junto con laptops y orientó la recomendación hacia gaming en lugar
+  de trabajo. Es una observación puntual, no una evaluación general
+  del modelo. La comprensión de expresiones coloquiales y la pertinencia
+  de las recomendaciones no están garantizadas.
 
-### Limitaciones actuales
+## Limitaciones del almacenamiento de imágenes
 
 - Las URLs generadas están firmadas y tienen una vigencia de una hora.
   Caduca el enlace, no el archivo.
@@ -569,17 +754,24 @@ medición general de calidad.
 
 ## Limitaciones conocidas
 
-- **Sin autenticación ni permisos**: cualquier cliente que llegue al puerto 8000 puede leer y escribir. El puerto se publica solo en 127.0.0.1, por lo que únicamente es accesible desde la propia máquina.
+- **Autorización del catálogo deliberadamente mínima**: la lectura es pública
+  y cualquier usuario autenticado puede crear, modificar o eliminar
+  registros del catálogo. No hay roles ni propiedad de productos.
+  La API de desarrollo solo se publica en 127.0.0.1.
 - **Las validaciones de la API solo aplican a la API**: el panel de administración, el shell y los scripts no pasan por los serializers. El caso más delicado son los ciclos de categorías; la base solo bloquea la autorreferencia directa. Una posible solución sería mover la regla a `Category.clean()`, pero se mantuvo simple.
 - **Reactivación de categorías sin comprobar el padre**: un `PATCH` con `active: true` no verifica que la categoría padre esté activa. La reactivación de productos sí comprueba que su marca y categoría efectivas estén activas.
-- **Pruebas automáticas parciales**: cubren Brand, Category, el pipeline RAG y la exclusión de campos internos del detalle de Product; la cobertura completa de Product e imágenes sigue pendiente.
+- **Pruebas automáticas parciales**: 75 tests cubren reglas de Brand y Category, filtros, autenticación, aislamiento de conversaciones, el pipeline RAG y la exclusión de campos internos del detalle de Product. La cobertura completa del CRUD de Product e imágenes sigue pendiente.
 
 ## Seguridad
 
 - Las credenciales viven en `.env` y `garage.toml`, que están en `.gitignore` y `.dockerignore`. El repositorio solo incluye plantillas (`.env.example`, `garage.toml.example`).
 - PostgreSQL no publica puertos. La API S3 de Garage y la API de Django solo escuchan en `127.0.0.1`.
 - La key de Garage solo tiene permisos de lectura y escritura sobre un bucket.
-- **LIMITACIÓN CONOCIDA**: la API no tiene autenticación. No la expongas a Internet en este estado.
+- La API incorpora autenticación por token, pero conserva autorización
+  global de escritura para usuarios autenticados. No está preparada
+  para exponerse a Internet como una tienda multiusuario real.
+- No envíes credenciales ni tokens por HTTP fuera del entorno local.
+  Un despliegue remoto requiere HTTPS.
 - La imagen base puede reportar vulnerabilidades en componentes incluidos sin parche disponible. El proyecto está pensado para desarrollo local; para producción se recomienda una imagen mínima, ejecución sin root y escaneo en CI.
 
 ## Pendiente
@@ -616,12 +808,13 @@ medición general de calidad.
 - [x] Umbral de similitud para descartar resultados irrelevantes.
 - [x] Embeddings idempotentes (saltar si ya existen).
 - [x] Tests automatizados del RAG.
+- [x] Autenticación y aislamiento de conversaciones por usuario.
 
 ### API
 
 - [x] Endpoints de productos, con serializers de lista y detalle y validación de precio y stock.
 - [x] Endpoints de imágenes mediante `ProductImageViewSet`.
 - [x] Filtrado de imágenes por producto mediante `/api/product-images?product=<id>`.
-- [ ] Filtros y búsqueda de productos por categoría, marca, texto y orden.
-- [ ] Autenticación con `TokenAuthentication` y permisos por grupos de Django.
-- [ ] Endpoints de reseñas.
+- [x] Filtros y búsqueda de productos por categoría, marca, texto, precio, stock y orden.
+- [x] Autenticación con TokenAuthentication y lectura pública/escritura autenticada, sin roles por decisión de alcance.
+- [ ] Endpoints de reseñas, pospuestos hasta después de las fases de imágenes y cobertura de tests.

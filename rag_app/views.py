@@ -9,6 +9,10 @@ from rag_app.ai import search_products, generate_response, build_retrieval_query
 from .permissions import AIEnabled
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+from rest_framework.permissions import IsAuthenticated
+from .filters import ProductFilter
 
 class BrandViewSet(viewsets.ModelViewSet):
     queryset = Brand.objects.all()
@@ -41,22 +45,43 @@ class CategoryViewSet(viewsets.ModelViewSet):
         serializer.save()
         
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all()
-    
+    queryset = Product.objects.select_related("brand", "category")
+
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+    filterset_class = ProductFilter
+
+    search_fields = [
+        "name",
+        "description",
+        "sku",
+        "brand__name",
+        "category__name",
+    ]
+    ordering_fields = ["price", "name", "created_at", "stock", "id"]
+    ordering = ["-created_at", "id"]
+
     def get_serializer_class(self):
-        if self.action == 'list':
+        if self.action == "list":
             return ProductListSerializer
         return ProductDetailSerializer
-    
+
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.action == 'list':
+        if self.action == "list":
             qs = qs.filter(active=True)
-        return qs    
-    
+        return qs
+
     def perform_destroy(self, instance):
-        serializer = self.get_serializer(instance, data = {'active':False},partial= True)
-        serializer.is_valid(raise_exception = True)
+        serializer = self.get_serializer(
+            instance,
+            data={"active": False},
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
         serializer.save()
 
 class ProductImageViewSet(viewsets.ModelViewSet):
@@ -74,7 +99,7 @@ class ProductImageViewSet(viewsets.ModelViewSet):
         return qs     
 
 class AskView(APIView):
-    permission_classes = [AIEnabled]
+    permission_classes = [IsAuthenticated, AIEnabled]
 
     def post(self, request):
         query = request.data.get('query')
@@ -87,14 +112,14 @@ class AskView(APIView):
         conversation_id = request.data.get('conversation_id')
         if conversation_id:
             try:
-                conversation = Conversation.objects.get(pk=conversation_id)
+                conversation = Conversation.objects.get(pk=conversation_id, user=request.user,)
             except (Conversation.DoesNotExist, DjangoValidationError, ValueError):
                 return Response(
                     {'error': 'conversation_id inválido'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
         else:
-            conversation = Conversation.objects.create()
+            conversation = Conversation.objects.create(user=request.user)
 
         recent = list(
             conversation.messages.order_by('-id')[:settings.AI_HISTORY_MESSAGES]

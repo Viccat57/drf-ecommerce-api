@@ -9,6 +9,7 @@ class BrandListTests(BaseAPITestCase):
         self.activa = Brand.objects.create(name="Nueva Marca", active=True)
         self.inactiva = Brand.objects.create(name="Vieja Marca", active=False)
         self.categoria = Category.objects.create(name='CategoryNew',slug='ctgnew')
+        self.autenticar()
 
     def test_get_solo_muestra_marcas_activas(self):
         response = self.client.get(reverse("brand-list"))

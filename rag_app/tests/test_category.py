@@ -12,6 +12,7 @@ class CategoryTests(BaseAPITestCase):
         self.brand = Brand.objects.create(name='TestBrand')
         self.activa = Category.objects.create(name='categoria_activa',active=True, slug='activa')
         self.inactiva = Category.objects.create(name='categoria_inactiva',active=False,slug='inactiva')
+        self.autenticar()
     
     def test_get_solo_muestra_activas(self):
         response = self.client.get(reverse("category-list"))
@@ -111,6 +112,7 @@ class CategoryHierarchyTests(BaseAPITestCase):
         self.a = Category.objects.create(name='A', slug='a')
         self.b = Category.objects.create(name='B', slug='b', parent=self.a)
         self.c = Category.objects.create(name='C', slug='c', parent=self.b)
+        self.autenticar()
 
     def test_patch_ciclo_corto(self):
         response = self.client.patch(reverse('category-detail',args=[self.a.pk]),{"parent":self.b.pk},format='json')
