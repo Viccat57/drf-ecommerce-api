@@ -13,3 +13,11 @@ class BaseAPITestCase(APITestCase):
             name="Test_product", sku=sku, description="test product",
             price=Decimal("1.01"), brand=marca, category=categoria, **extra,
         )
+
+DIM = Product._meta.get_field("embedding").dimensions
+
+def vec(*head):
+    v = [0.0] * DIM
+    for i, x in enumerate(head):
+        v[i] = float(x)
+    return v

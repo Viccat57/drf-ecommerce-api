@@ -130,7 +130,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
          
     class Meta:
         model = Product
-        fields = '__all__'   
+        exclude = ['embedding', 'embedding_hash']
         
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:

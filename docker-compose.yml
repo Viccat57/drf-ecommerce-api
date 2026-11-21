@@ -77,6 +77,7 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434}
       AI_EMBED_MODEL: ${AI_EMBED_MODEL:-nomic-embed-text}
       AI_CHAT_MODEL: ${AI_CHAT_MODEL:-qwen3.5:4b}
+      AI_ENABLED: ${AI_ENABLED:-0}
       GARAGE_BUCKET_NAME: ${GARAGE_BUCKET_NAME:-ecommerce-images}
       GARAGE_ENDPOINT_URL: ${GARAGE_ENDPOINT_URL:-http://garage:3900}
       GARAGE_REGION: ${GARAGE_REGION:-garage}

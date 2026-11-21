@@ -1,11 +1,14 @@
 from rest_framework import viewsets
-from .models import Brand, Category, Product, ProductImage
+from .models import Brand, Category, Product, ProductImage, Conversation, Message
 from .serializers import BrandSerializer, CategorySerializer, ProductDetailSerializer, ProductListSerializer, ProductImageSerializer
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rag_app.ai import search_products, generate_response
+from rag_app.ai import search_products, generate_response, build_retrieval_query
+from .permissions import AIEnabled
+from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 class BrandViewSet(viewsets.ModelViewSet):
     queryset = Brand.objects.all()
@@ -71,12 +74,59 @@ class ProductImageViewSet(viewsets.ModelViewSet):
         return qs     
 
 class AskView(APIView):
+    permission_classes = [AIEnabled]
+
     def post(self, request):
         query = request.data.get('query')
         if not query:
-            return Response({'error': 'query es requerido'}, status=status.HTTP_400_BAD_REQUEST)
-        results = search_products(query)
-        if not results:
-            return Response({'error': 'No se encontraron productos relevantes'}, status=status.HTTP_404_NOT_FOUND)
-        answer = generate_response(query, results)
-        return Response({'answer': answer, 'products': [{'id': p.id, 'name': p.name} for p in results]})    
+            return Response(
+                {'error': 'query es requerido'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        conversation_id = request.data.get('conversation_id')
+        if conversation_id:
+            try:
+                conversation = Conversation.objects.get(pk=conversation_id)
+            except (Conversation.DoesNotExist, DjangoValidationError, ValueError):
+                return Response(
+                    {'error': 'conversation_id inválido'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        else:
+            conversation = Conversation.objects.create()
+
+        recent = list(
+            conversation.messages.order_by('-id')[:settings.AI_HISTORY_MESSAGES]
+        )
+        history = [
+            {'role': m.role, 'content': m.content}
+            for m in reversed(recent)
+        ]
+
+        results = search_products(build_retrieval_query(query, history))
+        if results:
+            answer = generate_response(query, results, history)
+        else:
+            answer = 'No encontré productos relacionados con tu consulta.'
+
+        Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.USER,
+            content=query,
+        )
+        Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.ASSISTANT,
+            content=answer,
+            product_ids=[p.id for p in results],
+        )
+
+        return Response(
+            {
+                'conversation_id': str(conversation.id),
+                'answer': answer,
+                'products': [{'id': p.id, 'name': p.name} for p in results],
+            },
+            status=status.HTTP_200_OK,
+        )
