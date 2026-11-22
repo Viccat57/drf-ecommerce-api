@@ -33,7 +33,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.postgres',
     'rest_framework',
-    'rag_app',
+    'rag_app.apps.RagAppConfig',
     'django_filters',
     'rest_framework.authtoken',
 ]
@@ -72,6 +72,7 @@ if all(os.environ.get(k) for k in (
                 "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
                 "region_name": os.environ["GARAGE_REGION"],
                 "addressing_style": "path",
+                "file_overwrite": False,
             },
         },
         "staticfiles": {
