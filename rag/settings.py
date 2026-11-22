@@ -17,6 +17,9 @@ AI_ENABLED = os.environ.get("AI_ENABLED", "0") == "1"
 AI_MIN_SIMILARITY = float(os.environ.get("AI_MIN_SIMILARITY", "0.60"))
 AI_SEARCH_LIMIT = int(os.environ.get("AI_SEARCH_LIMIT", "5"))
 AI_HISTORY_MESSAGES = int(os.environ.get("AI_HISTORY_MESSAGES", "10"))
+IMAGE_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
+IMAGE_MAX_BYTES = int(os.environ.get("IMAGE_MAX_BYTES", 5 * 1024 * 1024))
+IMAGE_MAX_PIXELS = int(os.environ.get("IMAGE_MAX_PIXELS", 25_000_000))
 
 
 # Application definition

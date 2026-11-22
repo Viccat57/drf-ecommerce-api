@@ -1,5 +1,8 @@
+import io
 from decimal import Decimal
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 from rest_framework.test import APITestCase
 from rag_app.models import Brand, Category, Product
 
@@ -30,3 +33,14 @@ def vec(*head):
     for i, x in enumerate(head):
         v[i] = float(x)
     return v
+
+def make_image_file(
+    name="x.png", image_format="PNG", size=(10, 10), color="red"
+):
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, image_format)
+    return SimpleUploadedFile(
+        name,
+        buffer.getvalue(),
+        content_type=f"image/{image_format.lower()}",
+    )

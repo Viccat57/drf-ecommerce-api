@@ -4,6 +4,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from pgvector.django import VectorField
 from pgvector.django import HnswIndex
 import uuid
+from .validators import validate_product_image
 
 # Create your models here.
 class Brand(models.Model):
@@ -76,7 +77,7 @@ class Product(models.Model):
     
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    image = models.ImageField(upload_to="products/%Y/%m/", max_length=255)
+    image = models.ImageField(upload_to="products/%Y/%m/", max_length=255, validators=[validate_product_image],)
     is_primary = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     
