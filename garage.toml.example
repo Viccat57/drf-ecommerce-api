@@ -1,7 +1,17 @@
+# Configuración local de Garage.
+# Copia este archivo como garage.toml antes de iniciar los servicios.
+#
+# No escribas secretos directamente aquí.
+# El servicio secrets-init ejecuta docker/init_secrets.py.
+# Los secretos se leen desde el volumen garage-secrets,
+# montado en /secrets/garage dentro del contenedor.
+
 metadata_dir = "/var/lib/garage/meta"
 data_dir = "/var/lib/garage/data"
 
 db_engine = "sqlite"
+
+# Desarrollo local con un solo nodo, sin redundancia.
 replication_factor = 1
 
 rpc_bind_addr = "[::]:3901"
