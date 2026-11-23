@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Brand,Category, Product, ProductImage
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 
 class BrandSerializer(serializers.ModelSerializer):
     
@@ -135,35 +136,90 @@ class ProductDetailSerializer(serializers.ModelSerializer):
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
-        fields = '__all__'
-        read_only_fields = ['id','created_at']
+        fields = "__all__"
+        read_only_fields = ["id", "created_at"]
         validators = []
-        
+
+    def validate_product(self, value):
+        if self.instance is not None:
+            if value.pk != self.instance.product_id:
+                raise serializers.ValidationError(
+                    "No se puede cambiar el producto de una imagen."
+                )
+        return value
+
     def create(self, validated_data):
         with transaction.atomic():
-            producto = validated_data['product']
-            es_principal = validated_data.get('is_primary',False)
-            
+            producto = get_object_or_404(
+                Product.objects.select_for_update(),
+                pk=validated_data["product"].pk,
+            )
+
+            imagenes = ProductImage.objects.filter(product=producto)
+
+            es_primera = not imagenes.exists()
+            es_principal = (
+                es_primera or validated_data.get("is_primary", False)
+            )
+
+            validated_data["product"] = producto
+            validated_data["is_primary"] = es_principal
+
             if es_principal:
-                self.clear_primary(producto)
-                
+                imagenes.filter(is_primary=True).update(is_primary=False)
+
             return super().create(validated_data)
-    
+
     def update(self, instance, validated_data):
         with transaction.atomic():
-            producto = validated_data.get('product',instance.product)
-            es_principal = validated_data.get('is_primary',instance.is_primary)
-            
+            get_object_or_404(
+                Product.objects.select_for_update(),
+                pk=instance.product_id,
+            )
+
+            actual = get_object_or_404(
+                ProductImage,
+                pk=instance.pk,
+                product_id=instance.product_id,
+            )
+
+            producto_enviado = validated_data.get("product")
+            if (
+                producto_enviado is not None
+                and producto_enviado.pk != actual.product_id
+            ):
+                raise serializers.ValidationError({
+                    "product": (
+                        "No se puede cambiar el producto de una imagen."
+                    )
+                })
+
+            otras = ProductImage.objects.filter(
+                product_id=actual.product_id,
+            ).exclude(pk=actual.pk)
+
+            es_principal = validated_data.get(
+                "is_primary",
+                actual.is_primary,
+            )
+
             if es_principal:
-                self.clear_primary(producto, pk=instance.pk)
-                     
-            return super().update(instance, validated_data)
-    
-    def clear_primary(self, producto, pk=None): 
-        if pk is not None:
-            imagenes = producto.productimage_set.filter(is_primary=True).exclude(pk=pk)
-        else:
-            imagenes = producto.productimage_set.filter(is_primary= True)
-        
-        imagenes.update(is_primary=False)            
-                      
+                otras.filter(is_primary=True).update(is_primary=False)
+
+            elif actual.is_primary:
+                siguiente = otras.order_by("created_at", "pk").first()
+
+                if siguiente is None:
+                    raise serializers.ValidationError({
+                        "is_primary": (
+                            "No se puede desmarcar la única imagen principal."
+                        )
+                    })
+
+                actual.is_primary = False
+                actual.save(update_fields=["is_primary"])
+
+                siguiente.is_primary = True
+                siguiente.save(update_fields=["is_primary"])
+
+            return super().update(actual, validated_data)

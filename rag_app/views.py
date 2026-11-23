@@ -1,18 +1,20 @@
 from rest_framework import viewsets
-from .models import Brand, Category, Product, ProductImage, Conversation, Message
-from .serializers import BrandSerializer, CategorySerializer, ProductDetailSerializer, ProductListSerializer, ProductImageSerializer
+from rest_framework import filters
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from .models import Brand, Category, Product, ProductImage, Conversation, Message
+from .serializers import BrandSerializer, CategorySerializer, ProductDetailSerializer, ProductListSerializer, ProductImageSerializer
+from .filters import ProductFilter
 from rag_app.ai import search_products, generate_response, build_retrieval_query
 from .permissions import AIEnabled
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters
-from rest_framework.permissions import IsAuthenticated
-from .filters import ProductFilter
+from django.db import transaction
+from django.shortcuts import get_object_or_404
 
 class BrandViewSet(viewsets.ModelViewSet):
     queryset = Brand.objects.all()
@@ -96,7 +98,37 @@ class ProductImageViewSet(viewsets.ModelViewSet):
                 raise ValidationError('Se necesita un ID valido para buscar un producto') 
             qs = qs.filter(product__id=product)
                 
-        return qs     
+        return qs
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            get_object_or_404(
+                Product.objects.select_for_update(),
+                pk=instance.product_id,
+            )
+
+            actual = get_object_or_404(
+                ProductImage,
+                pk=instance.pk,
+                product_id=instance.product_id,
+            )
+
+            producto_id = actual.product_id
+            era_principal = actual.is_primary
+
+            actual.delete()
+
+            if era_principal:
+                siguiente = (
+                    ProductImage.objects
+                    .filter(product_id=producto_id)
+                    .order_by("created_at", "pk")
+                    .first()
+                )
+
+                if siguiente is not None:
+                    siguiente.is_primary = True
+                    siguiente.save(update_fields=["is_primary"])
 
 class AskView(APIView):
     permission_classes = [IsAuthenticated, AIEnabled]
