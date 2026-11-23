@@ -1,7 +1,5 @@
 from rag_app.serializers import ProductDetailSerializer
-
 from .base import BaseAPITestCase
-
 
 class ProductDetailSerializerTests(BaseAPITestCase):
     def test_no_expone_campos_internos_de_embeddings(self):

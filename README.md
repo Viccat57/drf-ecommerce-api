@@ -8,7 +8,7 @@ Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de pro
 > la autenticación por token y el asistente RAG con memoria y aislamiento por
 > usuario. El manejo de imágenes incluye validación, limpieza de archivos,
 > URLs firmadas accesibles desde Windows y reglas de imagen principal.
-> La última suite validada localmente contiene 105 tests. Las verificaciones
+> La última suite validada localmente contiene 162 tests. Las verificaciones
 > manuales contra Garage se detallan por separado. Este documento describe
 > el estado de esta rama; la validación local no acredita por sí sola el CI
 > ni la integración en `main`. Las tareas restantes aparecen en
@@ -202,6 +202,16 @@ la red interna de Compose. Los datos persisten en el volumen `pgdata`.
 El comando `seed_demo` crea marcas, categorías y productos de demostración.
 Es idempotente: puede ejecutarse varias veces sin duplicar registros.
 
+El comando reutiliza marcas por nombre y actualiza categorías por slug y
+productos por SKU. Volver a ejecutarlo puede sobrescribir los campos de
+demostración incluidos en el comando; no preserva necesariamente las
+ediciones manuales de esos registros. Los productos ajenos al catálogo
+demo, con otros SKU, se conservan.
+
+Las pruebas automatizadas comprueban la creación del catálogo, la repetición
+sin duplicados ni cambios de identificadores, la restauración de campos
+demo modificados y la conservación de registros ajenos.
+
 ```bash
 docker compose -p <nombre-proyecto> exec web python manage.py seed_demo
 ```
@@ -217,7 +227,7 @@ docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 
 ## Pruebas
 
-La última suite validada localmente contiene 105 tests. Django crea y
+La última suite validada localmente contiene 162 tests. Django crea y
 elimina una base temporal. Las llamadas a Ollama se simulan y las pruebas
 de API de imágenes usan `InMemoryStorage`; no escriben en Garage.
 Las pruebas de URLs generan firmas con credenciales ficticias, sin descargar
@@ -256,10 +266,31 @@ Se añadieron 30 tests de imágenes a los 75 anteriores:
 | URLs | 3 | Endpoint externo, conservación del endpoint interno y delegación de parámetros de firma |
 | Imagen principal | 12 | Primera principal, cambios, promoción, borrado, rechazo de movimiento entre productos y operaciones sin cambio efectivo |
 
-Estos tests no equivalen a una medición porcentual de cobertura. Siguen
-pendientes el CRUD completo de Product, cobertura adicional de imágenes y
-pruebas de concurrencia con conexiones separadas. Las comprobaciones reales
-contra Garage se documentan en
+La fase 5 añade 57 tests a los 105 anteriores:
+
+| Grupo añadido | Tests | Alcance |
+| --- | ---: | --- |
+| CRUD de Product | 29 | Lectura y escritura, validaciones, SKU, relaciones activas, reactivación, borrado lógico y restricciones de base de datos |
+| API de imágenes | 13 | Filtrado, lectura pública, aislamiento entre productos y rechazo de cambios sin efectos parciales |
+| Concurrencia de imágenes | 9 | Peticiones con conexiones separadas, operaciones con el producto bloqueado y operaciones simultáneas de creación, marcado, desmarcado y borrado |
+| Datos de demostración | 4 | Creación, repetición sin duplicados, restauración de campos demo y conservación de registros ajenos |
+| Consultas de Product | 2 | Listado paginado sin crecimiento de consultas por producto y consulta de detalle |
+
+El módulo de concurrencia se validó localmente y pasó cinco ejecuciones
+adicionales consecutivas. Estas pruebas no son una prueba de carga ni
+demuestran la ausencia de todas las condiciones de carrera. La comprobación
+temporal de que un hilo sigue activo no demuestra por sí sola que esté
+esperando un bloqueo de PostgreSQL.
+
+Las pruebas de consultas comprueban dos consultas para el listado, tanto
+con un producto como con diez, y una para el detalle. Miden la ejecución de
+la vista y su serialización, con paginación controlada en el test; no incluyen
+el coste completo del middleware ni de una petición autenticada.
+
+Estos resultados no equivalen a una medición porcentual de cobertura.
+No se ha configurado un umbral de coverage. Las pruebas automatizadas de
+imágenes usan almacenamiento en memoria y no comprueban concurrencia contra
+Garage. Las verificaciones reales contra Garage se documentan en
 [Pruebas manuales realizadas](#pruebas-manuales-realizadas).
 
 No es necesario ejecutar `flush` ni eliminar volúmenes para correr los tests
@@ -653,8 +684,9 @@ el estado se vuelve a leer después de adquirir el bloqueo. La restricción
 
 Estas reglas no se aplican automáticamente a escrituras directas desde
 el ORM o Django Admin. No se reparan retroactivamente productos históricos
-que ya tengan imágenes pero ninguna principal. Las pruebas con conexiones
-concurrentes separadas siguen pendientes.
+que ya tengan imágenes pero ninguna principal. La suite incluye pruebas
+con conexiones separadas para operaciones concurrentes de la API; su
+alcance y limitaciones se describen en [Pruebas](#pruebas).
 
 Los validadores de clase automáticos del serializer están desactivados para
 permitir la sustitución de principal; las validaciones de campo permanecen
@@ -869,8 +901,9 @@ seguridad ni una evaluación general de calidad del modelo.
   de productos históricos sin principal.
 - Las reglas de principal y producto inmutable se aplican en la API, no a
   todas las escrituras posibles desde Admin, shell o scripts.
-- Hay bloqueo por producto, pero faltan pruebas de concurrencia real con
-  conexiones separadas.
+- Las operaciones de la API usan bloqueo por producto y cuentan con pruebas
+  con conexiones separadas. No se ha realizado una prueba de carga ni una
+  validación de concurrencia contra Garage.
 - Las URLs firmadas caducan a la hora. No compartas sus parámetros completos.
   El endpoint `127.0.0.1` es exclusivo del entorno local.
 - El validador no sanea metadatos, no recomprime ni analiza malware. Pillow
@@ -890,11 +923,11 @@ seguridad ni una evaluación general de calidad del modelo.
   API y en formularios del modelo, pero `save()` y `objects.create()` no
   ejecutan automáticamente `full_clean()`.
 - **Reactivación de categorías sin comprobar el padre**: un `PATCH` con `active: true` no verifica que la categoría padre esté activa. La reactivación de productos sí comprueba que su marca y categoría efectivas estén activas.
-- Pruebas automáticas parciales: la última suite local contiene 105 tests,
-  incluidos 30 de validación, ciclo de vida, URLs y principal de imágenes.
-  El CRUD completo de Product, cobertura adicional de imágenes y concurrencia
-  con conexiones separadas siguen pendientes; no se ha medido un porcentaje
-  de cobertura.
+- La última suite validada localmente contiene 162 tests e incluye CRUD de
+  Product, cobertura adicional de imágenes, concurrencia con conexiones
+  separadas, datos de demostración y consultas de Product. No es una
+  verificación exhaustiva: no se ha medido un porcentaje de cobertura ni
+  existe una suite automatizada de integración contra Garage.
 
 ## Seguridad
 
@@ -930,20 +963,35 @@ seguridad ni una evaluación general de calidad del modelo.
 
 ### Tests
 
-- [x] `seed_demo` disponible para crear datos de demostración; su idempotencia completa aún requiere tests.
 - [x] Pruebas automatizadas de Brand y Category.
-- [x] Validación, ciclo de vida, URLs firmadas y reglas básicas de principal de imágenes.
-- [x] Creación manual de primera imagen y secundaria sin enviar `is_primary`.
-- [ ] Concurrencia de cambios, desmarcados y borrados con conexiones separadas.
-- [ ] Cobertura restante del CRUD de Product e imágenes, incluido aislamiento entre productos.
-- [ ] Suite automatizada de integración contra almacenamiento S3 (las comprobaciones actuales contra Garage son manuales).
+- [x] Validación, ciclo de vida, URLs firmadas y reglas de principal de imágenes.
+- [x] Cobertura del CRUD de Product: validaciones, estados, borrado lógico y restricciones.
+- [x] Filtrado de imágenes y aislamiento entre productos.
+- [x] Rechazo de cambios de imágenes sin modificar registros ni archivos existentes.
+- [x] Concurrencia de creación, marcado, desmarcado y borrado con conexiones separadas.
+- [x] Pruebas de `seed_demo`: creación, repetición sin duplicados, actualización de datos demo y conservación de registros ajenos.
+- [x] Pruebas de consultas del listado y detalle de Product.
+- [ ] Suite automatizada de integración contra almacenamiento S3; las comprobaciones actuales contra Garage son manuales.
 
-### Integración de los cambios de imágenes
+Las pruebas anteriores están validadas localmente en la rama de fase 5.
+La medición porcentual de cobertura y un umbral en CI quedan como mejoras
+opcionales, no realizadas en esta fase.
 
-- [ ] Confirmar jobs `test` y `docker` para el último commit del PR.
-- [ ] Integrar en `main` y confirmar el workflow posterior al merge.
+### Integración de los cambios de imágenes — fase 4
 
-La suite local y las pruebas manuales no sustituyen esas comprobaciones de CI.
+- [x] Jobs `test` y `docker` aprobados en el PR #9.
+- [x] Integración en `main` mediante el merge `8c4cc53`.
+- [x] Workflow posterior al merge en `main` confirmado en verde.
+
+### Integración de la cobertura restante — fase 5
+
+- [x] Suite local de 162 tests pasando.
+- [x] Cinco repeticiones adicionales del módulo de concurrencia satisfactorias.
+- [x] Comprobación de migraciones sin cambios y `git diff --check` sin errores.
+- [ ] Confirmar jobs `test` y `docker` para el último commit del PR de fase 5.
+- [ ] Integrar la fase 5 en `main` y confirmar el workflow posterior al merge.
+
+La suite local y las pruebas manuales no sustituyen las comprobaciones de CI.
 
 ### RAG
 
