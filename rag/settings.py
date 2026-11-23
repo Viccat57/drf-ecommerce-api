@@ -62,17 +62,33 @@ REST_FRAMEWORK = {
 if all(os.environ.get(k) for k in (
     "GARAGE_ACCESS_KEY_ID", "GARAGE_SECRET_ACCESS_KEY",
     "GARAGE_BUCKET_NAME", "GARAGE_ENDPOINT_URL", "GARAGE_REGION")):
+    garage_options = {
+        "access_key": os.environ["GARAGE_ACCESS_KEY_ID"],
+        "secret_key": os.environ["GARAGE_SECRET_ACCESS_KEY"],
+        "bucket_name": os.environ["GARAGE_BUCKET_NAME"],
+        "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
+        "region_name": os.environ["GARAGE_REGION"],
+        "addressing_style": "path",
+        "signature_version": "s3v4",
+        "file_overwrite": False,
+        "default_acl": None,
+        "querystring_auth": True,
+        "querystring_expire": 3600,
+    }
+
     STORAGES = {
         "default": {
-            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "BACKEND": "rag_app.storage.GarageStorage",
+            "OPTIONS": garage_options,
+        },
+        "image_urls": {
+            "BACKEND": "storages.backends.s3.S3Storage",
             "OPTIONS": {
-                "access_key": os.environ["GARAGE_ACCESS_KEY_ID"],
-                "secret_key": os.environ["GARAGE_SECRET_ACCESS_KEY"],
-                "bucket_name": os.environ["GARAGE_BUCKET_NAME"],
-                "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
-                "region_name": os.environ["GARAGE_REGION"],
-                "addressing_style": "path",
-                "file_overwrite": False,
+                **garage_options,
+                "endpoint_url": os.environ.get(
+                    "GARAGE_PUBLIC_ENDPOINT_URL",
+                    "http://127.0.0.1:3900",
+                ),
             },
         },
         "staticfiles": {
