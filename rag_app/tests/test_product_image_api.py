@@ -1,12 +1,8 @@
 from unittest.mock import patch
-
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
-
 from rag_app.models import Product, ProductImage
-
 from .base import BaseAPITestCase, make_image_file
-
 
 class ProductImageAPITests(BaseAPITestCase):
     url = "/api/product-images"

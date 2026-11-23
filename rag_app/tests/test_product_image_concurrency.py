@@ -1,14 +1,10 @@
 import threading
 from decimal import Decimal
-
 from django.contrib.auth import get_user_model
 from django.db import connections, transaction
 from rest_framework.test import APIClient, APITransactionTestCase
-
 from rag_app.models import Brand, Category, Product, ProductImage
-
 from .base import make_image_file
-
 
 class ProductImageConcurrencyTests(APITransactionTestCase):
     url = "/api/product-images"
