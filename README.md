@@ -5,10 +5,14 @@
 Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y un asesor de compras basado en RAG.
 
 > Estado: en desarrollo. Funcionan la API de catálogo con filtros y búsqueda,
-> la autenticación por token, el almacenamiento de imágenes en Garage y el
-> asistente RAG con memoria de conversación y aislamiento por usuario.
-> Este documento describe lo implementado y validado localmente; las tareas
-> pendientes aparecen en [Pendiente](#pendiente).
+> la autenticación por token y el asistente RAG con memoria y aislamiento por
+> usuario. El manejo de imágenes incluye validación, limpieza de archivos,
+> URLs firmadas accesibles desde Windows y reglas de imagen principal.
+> La última suite validada localmente contiene 105 tests. Las verificaciones
+> manuales contra Garage se detallan por separado. Este documento describe
+> el estado de esta rama; la validación local no acredita por sí sola el CI
+> ni la integración en `main`. Las tareas restantes aparecen en
+> [Pendiente](#pendiente).
 
 ## Contenido
 
@@ -186,6 +190,9 @@ sin GPU, elimina o comenta ese bloque; Ollama funcionará en CPU (más lento).
 
 - Panel de administración: `http://localhost:8000/admin/`
 - API navegable: `http://localhost:8000/api/`
+- API S3 de Garage para descargas locales: `http://127.0.0.1:3900`.
+  No es una galería ni un panel web: utiliza las URLs firmadas del campo
+  `image`. El bucket no se configura para lectura anónima general.
 
 La base de datos no publica puertos hacia el host; solo es accesible desde
 la red interna de Compose. Los datos persisten en el volumen `pgdata`.
@@ -210,50 +217,54 @@ docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 
 ## Pruebas
 
-La suite validada localmente contiene 75 tests. Usa una base temporal que
-Django crea y elimina; no utiliza Ollama real porque las llamadas de IA se
-simulan en los tests.
+La última suite validada localmente contiene 105 tests. Django crea y
+elimina una base temporal. Las llamadas a Ollama se simulan y las pruebas
+de API de imágenes usan `InMemoryStorage`; no escriben en Garage.
+Las pruebas de URLs generan firmas con credenciales ficticias, sin descargar
+objetos reales.
 
-Levanta la base de datos y reconstruye la imagen después de cambiar código
-si no tienes un bind mount:
+Levanta PostgreSQL antes de ejecutar la suite completa. `--no-deps` no
+inicia las dependencias del contenedor de pruebas:
 
-```bash
+```powershell
 docker compose up -d db
 docker compose build web
 
 docker compose run --rm --no-deps -e DJANGO_SETTINGS_MODULE=rag.settings_test --entrypoint python web manage.py test --noinput -v 2
 
 docker compose run --rm --no-deps -e DJANGO_SETTINGS_MODULE=rag.settings_test --entrypoint python web manage.py makemigrations --check --dry-run
+
+git diff --check
 ```
 
-La configuración `rag.settings_test` usa almacenamiento de pruebas.
-`--entrypoint python` evita ejecutar el script habitual de arranque.
-Si usas `-p <nombre-proyecto>`, conserva ese mismo nombre en todos los comandos.
+`--entrypoint python` evita el script habitual de arranque. Si usas
+`-p <nombre-proyecto>` o archivos Compose adicionales, conserva esos mismos
+argumentos en los comandos correspondientes.
 
-Cobertura actual: reglas de Brand y Category, integridad de Category,
-filtros y búsqueda de productos, orden y paginación, autenticación por
-token, rechazo de escrituras anónimas, búsqueda vectorial y umbral,
-flag de IA, embeddings idempotentes y `--force`, memoria multi-turno,
-asignación de propietario a las conversaciones, rechazo de conversaciones
-ajenas o sin dueño, construcción de mensajes para Ollama y exclusión de
-campos internos del serializer de detalle.
+La suite incluye las reglas de Brand y Category, integridad de Category,
+filtros y búsqueda de productos, orden y paginación, autenticación por token,
+rechazo de escrituras anónimas, aislamiento de conversaciones, recuperación
+RAG, umbral, flag de IA, embeddings idempotentes y `--force`, historial,
+construcción de mensajes y exclusión de campos internos de embeddings.
 
-La cobertura completa del CRUD de Product e imágenes sigue pendiente.
+Se añadieron 30 tests de imágenes a los 75 anteriores:
 
-Para reiniciar los datos de desarrollo sin afectar Garage, se puede
-vaciar la base de datos y volver a cargar el catálogo de demostración:
+| Grupo | Tests | Alcance |
+| --- | ---: | --- |
+| Validación | 7 | Formatos permitidos, archivo falso, formato rechazado, bytes, píxeles, PATCH sin archivo y subida anónima |
+| Ciclo de vida | 8 | Nombres repetidos, borrado, reemplazo, PATCH sin archivo, cascada, rollback, referencias compartidas y fallo del almacenamiento |
+| URLs | 3 | Endpoint externo, conservación del endpoint interno y delegación de parámetros de firma |
+| Imagen principal | 12 | Primera principal, cambios, promoción, borrado, rechazo de movimiento entre productos y operaciones sin cambio efectivo |
 
-```bash
-docker compose exec web python manage.py flush
-docker compose exec web python manage.py createsuperuser
-docker compose exec web python manage.py seed_demo
-```
+Estos tests no equivalen a una medición porcentual de cobertura. Siguen
+pendientes el CRUD completo de Product, cobertura adicional de imágenes y
+pruebas de concurrencia con conexiones separadas. Las comprobaciones reales
+contra Garage se documentan en
+[Pruebas manuales realizadas](#pruebas-manuales-realizadas).
 
-`flush` vacía los datos de la base configurada, incluidos los usuarios,
-tokens y conversaciones. No es necesario para ejecutar las pruebas ni
-para aplicar las migraciones de esta fase.
-Los archivos ya subidos a Garage permanecen en el bucket, pero quedan
-sin referencia en la base de datos.
+No es necesario ejecutar `flush` ni eliminar volúmenes para correr los tests
+o aplicar las migraciones. Vaciar PostgreSQL deja los objetos de Garage
+sin referencias; no es un procedimiento de limpieza del almacenamiento.
 
 ## Autenticación y alcance
 
@@ -327,7 +338,7 @@ los permisos correspondientes.
 | `/api/products` | GET, POST | Lista solo productos activos |
 | `/api/products/<id>` | GET, PUT, PATCH, DELETE | El detalle incluye también los productos inactivos |
 | `/api/product-images` | GET, POST | Lista registros de imágenes y permite subir archivos mediante multipart/form-data |
-| `/api/product-images/<id>` | GET, PUT, PATCH, DELETE | Consulta y modifica un registro de imagen; DELETE realiza borrado real de la fila |
+| `/api/product-images/<id>` | GET, PUT, PATCH, DELETE | Consulta, reemplaza o elimina una imagen; no permite cambiar su producto; DELETE limpia el archivo tras commit y promueve otra principal cuando corresponde |
 | `/api/ia/ask` | POST | Requiere token; recibe `query` y `conversation_id` opcional; solo permite continuar conversaciones propias |
 | `/api/auth/token` | POST | Obtiene un token con credenciales de una cuenta existente |
 
@@ -338,12 +349,11 @@ pública; sus operaciones de escritura requieren el encabezado
 En marcas, categorías y productos, `DELETE` realiza **borrado lógico**
 (`active = false`). Para reactivar, se utiliza `PATCH` con `{"active": true}`.
 
-En imágenes, `DELETE` elimina la fila de ProductImage. La eliminación
-del archivo correspondiente en Garage todavía no está implementada.
-
-## Filtros y búsqueda de productos
-
-`GET /api/products` admite parámetros combinables:
+En imágenes, `DELETE` elimina realmente la fila de ProductImage y programa
+la limpieza del archivo después del commit. Si era principal, promueve la
+imagen restante más antigua. Borrar la última imagen está permitido.
+La limpieza comprueba que otra fila no siga referenciando el mismo archivo;
+los errores de almacenamiento se registran y pueden dejar objetos huérfanos.
 
 ## Filtros y búsqueda de productos
 
@@ -397,7 +407,8 @@ Las reglas viven en tres capas, porque cada una protege contra cosas distintas.
 - `rating` entre 1 y 5 en reseñas.
 - Una categoría no puede ser su propio padre (`parent` distinto del propio `id`).
 - Como máximo una imagen principal por producto (índice único parcial).
-  Se permite que un producto no tenga ninguna imagen principal.
+  PostgreSQL por sí solo no exige que exista una principal; la API aplica
+  las reglas de creación y promoción descritas más adelante.
 - Una sola reseña por usuario y producto.
 - `slug` de categoría y `sku` de producto únicos.
 
@@ -407,9 +418,11 @@ Las reglas viven en tres capas, porque cada una protege contra cosas distintas.
 - `CASCADE`: al borrar realmente un producto desde el ORM se eliminan sus
   registros de imágenes y reseñas; al borrar un usuario, sus reseñas y
   conversaciones. Al borrar una conversación se eliminan sus mensajes.
-  Esto no elimina automáticamente los archivos almacenados en Garage.
+  Las señales de ProductImage programan la limpieza de los archivos después
+  del commit y comprueban que no queden otras referencias a su ruta. Esta
+  limpieza es lógica de la aplicación, no una operación CASCADE de S3.
 
-### 3. API (serializers de Brand, Category y Product)
+### 3. API (serializers y vistas)
 
 - No se puede desactivar una categoría con subcategorías activas o con productos activos.
 - No se puede desactivar una marca con productos activos.
@@ -418,6 +431,12 @@ Las reglas viven en tres capas, porque cada una protege contra cosas distintas.
 - Rechazo de marcas/categorías inactivas al asignarlas a un producto.
 - Al actualizar un producto, si su estado final es activo, su marca y categoría también deben estar activas. Se consideran las relaciones enviadas en la petición o, si no vienen, las que ya tiene el producto.
 - Se permite reactivar un producto y cambiar su marca y categoría en la misma petición.
+- En imágenes se aplican las reglas de principal, promoción y producto
+  inmutable descritas en [Imagen principal](#imagen-principal).
+- El archivo de imagen se valida antes de guardarse. El validador está
+  declarado en el campo del modelo y se utiliza en la API y en formularios
+  del modelo; `save()` y `objects.create()` no ejecutan automáticamente
+  toda la validación del modelo.
 
 ## Decisiones de diseño
 
@@ -430,143 +449,247 @@ Las reglas viven en tres capas, porque cada una protege contra cosas distintas.
 
 ## Almacenamiento de imágenes con Garage
 
-Las imágenes se almacenan en Garage, un servicio compatible con S3,
-integrado con Django mediante django-storages[s3].
+Las imágenes se almacenan en Garage, compatible con S3, mediante
+`django-storages[s3]`.
 
 ### Arquitectura
 
 - PostgreSQL guarda los registros ProductImage y la ruta de cada archivo.
-- Garage guarda el contenido de los archivos en el bucket ecommerce-images.
-- Garage utiliza SQLite para sus metadatos internos; esto no cambia la
-  base de datos PostgreSQL de Django.
-- Django accede a Garage mediante `http://garage:3900`, dentro de la red
-  de Docker Compose.
-- La API S3 se publica únicamente en 127.0.0.1:3900.
-- Los datos y metadatos persisten en los volúmenes garage-data y garage-meta.
+- Garage guarda los objetos en el bucket `ecommerce-images` por defecto.
+- Garage utiliza SQLite para sus metadatos internos; Django utiliza PostgreSQL.
+- `rag_app.storage.GarageStorage` realiza las operaciones de almacenamiento
+  mediante el endpoint interno `http://garage:3900`.
+- Su método `url()` delega en el alias `image_urls`, que firma los enlaces
+  con el endpoint accesible desde Windows: `http://127.0.0.1:3900`.
+- El puerto S3 se publica como `127.0.0.1:3900:3900`. No se publican los
+  puertos RPC ni administrativo en la configuración base de Compose.
+- Los datos y metadatos de Garage persisten en `garage-data` y `garage-meta`.
+- Los archivos estáticos conservan el backend local de Django.
 
-El almacenamiento default de Django utiliza el backend S3. Los archivos
-estáticos conservan el backend local de Django.
+Si faltan las variables necesarias para activar S3, la configuración normal
+utiliza `FileSystemStorage`. No se debe interpretar una prueba con ese
+backend como una comprobación de Garage.
 
-### Configuración local realizada
+### Inicialización y secretos
 
-La configuración de Garage se realiza automáticamente al arrancar:
+Copia `garage.toml.example` como `garage.toml`. La plantilla referencia
+`rpc_secret_file` y `admin_token_file`: no requiere escribir llaves en el TOML.
 
-1. `init_secrets.py` genera `garage_rpc_secret`, `garage_admin_token` y
-   `django_secret_key` en `/secrets`.
-2. `init_garage.py` usa la API Admin de Garage para:
-   - Asignar capacidad al nodo y aplicar el layout.
-   - Crear el bucket `ecommerce-images`.
-   - Crear la llave `django-garage-key` con permisos de lectura y escritura.
-   - Guardar las credenciales S3 en `/secrets/s3/garage_s3.env`.
-3. El servicio `web` carga esas credenciales al arrancar.
+1. `secrets-init` ejecuta `docker/init_secrets.py` y crea los secretos de
+   Garage y Django si los archivos todavía no existen. No los rota en
+   cada arranque.
+2. `garage-init` ejecuta `docker/init_garage.py`: configura el layout inicial,
+   crea o reutiliza el bucket y la llave S3, concede lectura y escritura
+   sobre el bucket y guarda las credenciales en `/secrets/s3/garage_s3.env`.
+3. El entrypoint de `web` carga esas credenciales antes de iniciar Django.
 
-No es necesario ejecutar pasos manuales de Garage.
+No es necesario configurar manualmente `GARAGE_ACCESS_KEY_ID` ni
+`GARAGE_SECRET_ACCESS_KEY` en `.env`. No muestres el contenido del archivo
+de credenciales en logs, capturas o incidencias.
 
-### Inicialización de Garage
-
-La inicialización de Garage (layout, bucket y llave de acceso) se realiza
-automáticamente por el servicio `garage-init` al arrancar. No requiere
-pasos manuales.
-
-El script `docker/init_garage.py`:
-
-- Detecta el identificador del nodo.
-- Asigna capacidad y aplica el layout.
-- Crea el bucket `ecommerce-images`.
-- Crea la llave `django-garage-key` con permisos de lectura y escritura.
-- Guarda las credenciales S3 en `/secrets/s3/garage_s3.env`.
-
-El servicio `web` carga esas credenciales al arrancar (o al recrearse
-después de que Garage termine). No es necesario configurar
-`GARAGE_ACCESS_KEY_ID` ni `GARAGE_SECRET_ACCESS_KEY` manualmente.
-
-#### Verificación
-
-Sube una imagen a un producto existente mediante `multipart/form-data`. En PowerShell, utiliza `curl.exe`:
+Un proceso iniciado con `docker compose exec` no vuelve a ejecutar el
+entrypoint ni hereda las variables exportadas solo por él. Para abrir un
+shell de diagnóstico con las credenciales de Garage cargadas:
 
 ```powershell
-curl.exe -X POST http://localhost:8000/api/product-images -H "Authorization: Token TU_TOKEN" -F "product=1" -F "image=@foto.jpg" -F "is_primary=true"
+docker compose exec web sh -c 'set -e; set -a; . /secrets/s3/garage_s3.env; set +a; exec python manage.py shell'
 ```
 
-`TU_TOKEN` y el ID del producto deben sustituirse por valores reales.
+Comprueba el backend antes de interpretar una consulta de almacenamiento;
+no imprimas las credenciales para diagnosticarlo.
 
-La respuesta esperada es `201 Created`. Puede confirmarse la existencia del bucket y de la llave con `garage bucket list` y `garage key list`.
+#### Persistencia
 
-#### Reinicio de los volúmenes
-
-El comando `docker compose down -v` elimina los volúmenes `pgdata`, `garage-meta` y `garage-data`. Con ello se pierden los datos de PostgreSQL y toda la configuración de Garage, por lo que debe repetirse este procedimiento y generar una llave nueva.
+No uses `docker compose down -v` para actualizar código o aplicar migraciones:
+elimina los volúmenes declarados del proyecto, incluidos datos y secretos.
+La recreación de contenedores sin eliminar volúmenes conserva esos datos.
 
 ### Variables de entorno
 
-Las credenciales S3 (`GARAGE_ACCESS_KEY_ID` y `GARAGE_SECRET_ACCESS_KEY`)
-se generan automáticamente por `init_garage.py` y se guardan en
-`/secrets/s3/garage_s3.env`. El servicio `web` las carga al arrancar.
-
-No es necesario configurarlas manualmente en `.env`. Las variables
-restantes tienen valores por defecto en `docker-compose.yml`:
+Configuración local por defecto:
 
 ```dotenv
 GARAGE_BUCKET_NAME=ecommerce-images
 GARAGE_ENDPOINT_URL=http://garage:3900
+GARAGE_PUBLIC_ENDPOINT_URL=http://127.0.0.1:3900
 GARAGE_REGION=garage
+IMAGE_MAX_BYTES=5242880
+IMAGE_MAX_PIXELS=25000000
 ```
 
-### Subida de imágenes
+`GARAGE_ENDPOINT_URL` se usa para subir, leer, consultar y borrar objetos
+desde Django. `GARAGE_PUBLIC_ENDPOINT_URL` se usa para generar los enlaces
+firmados entregados al cliente; no convierte el bucket en público.
 
-Las rutas disponibles están en [Endpoints disponibles](#endpoints-disponibles).
+Los límites se leen en settings y los endpoints se configuran para el
+servicio. Cambiar `.env.example` no modifica `.env`; después de modificar
+las variables efectivas o el código reconstruye/recrea `web` según corresponda.
 
-La creación de imágenes requiere un formulario `multipart/form-data` con:
+### Validación del archivo
+
+- Formatos admitidos: JPEG, PNG y WEBP. Pillow identifica el formato real;
+  la extensión o el `Content-Type` declarados no bastan.
+- Máximo por archivo: 5 MiB (5 242 880 bytes) por defecto.
+- Máximo de píxeles: 25 000 000, calculados como ancho por alto.
+- Deben cumplirse ambos límites. No se fija un máximo independiente por lado.
+- La validación se realiza antes de guardar el archivo mediante la API.
+- El validador no redimensiona, recomprime, elimina metadatos ni proporciona
+  un análisis antivirus. No mide la calidad visual.
+
+### Subida y reemplazo de imágenes
+
+La creación utiliza `multipart/form-data`:
 
 - `product`: ID de un producto existente.
-- `image`: archivo de imagen.
-- `is_primary`: booleano opcional; el valor predeterminado es `false`.
+- `image`: archivo válido.
+- `is_primary`: opcional. La primera imagen se convierte en principal incluso
+  si se envía `false`; las posteriores son secundarias salvo petición explícita.
 
-Para subir imágenes utiliza Postman o curl con un token. Iniciar sesión
-en Django Admin no autentica por sí solo las escrituras de la API, que
-está configurada con TokenAuthentication.
+Ejemplo desde PowerShell con un token y producto reales:
 
-El listado consulta los registros de PostgreSQL, no enumera directamente
-todos los objetos del bucket.
+```powershell
+curl.exe -X POST http://localhost:8000/api/product-images -H "Authorization: Token TU_TOKEN" -F "product=1" -F "image=@foto.jpg"
+```
+
+La respuesta esperada es `201 Created`. No guardes el token real en el
+repositorio. Iniciar sesión en Django Admin no autentica las escrituras de
+la API, configurada con TokenAuthentication.
+
+Para reemplazar el archivo, envía `PATCH /api/product-images/<id>` con el
+campo `image` de tipo File. No hace falta reenviar `product` ni `is_primary`.
+Cambiar la imagen no cambia por sí solo su estado de principal.
+
+El listado consulta PostgreSQL, no enumera todos los objetos del bucket.
+Las subidas pasan por Django; no se implementan subidas directas mediante
+URLs firmadas de escritura.
+
+### Nombres y ciclo de vida
+
+- `file_overwrite=False` evita sobrescribir el objeto existente cuando se
+  repite un nombre; el backend genera un nombre disponible.
+- Al reemplazar el archivo, se programa la eliminación de la ruta anterior.
+- Al borrar el registro, se programa la eliminación de su archivo. También
+  se cubren los registros eliminados por una cascada real del ORM.
+- Las señales registradas en `AppConfig.ready()` realizan la limpieza con
+  `transaction.on_commit()`. Si la transacción se revierte, no se ejecuta
+  el callback de eliminación.
+- Antes de borrar se comprueba que otra fila de ProductImage no referencie
+  la misma ruta, para proteger referencias históricas compartidas.
+- Si el almacenamiento falla, se registra el error. No se revierte una
+  transacción ya confirmada ni se implementan reintentos automáticos.
+- Desactivar un producto mediante la API es borrado lógico: conserva sus
+  registros de imágenes y sus archivos.
+
+Esta lógica no elimina retroactivamente objetos huérfanos anteriores ni
+convierte PostgreSQL y S3 en una sola transacción.
+
+### Descarga desde Windows y URLs firmadas
+
+El campo `image` devuelve una URL de descarga firmada con S3v4 y una vigencia
+configurada de 3600 segundos. Caduca el enlace, no el archivo; una consulta
+posterior a la API permite obtener otro enlace.
+
+La URL se firma desde el principio con el endpoint externo. No sustituyas
+el hostname de una URL ya firmada. El bucket permanece privado; quien tenga
+un enlace válido y pueda alcanzar Garage puede descargar ese objeto durante
+su vigencia. La lectura de los registros de imágenes en la API sigue siendo
+pública por la decisión de alcance del catálogo.
+
+Para comprobar una descarga en PowerShell, introduce la URL sin formato
+Markdown y la ruta del mismo archivo que subiste:
+
+```powershell
+& {
+    $ErrorActionPreference = "Stop"
+    $original = (Read-Host "Ruta del archivo original, sin comillas").Trim()
+    if (-not (Test-Path -LiteralPath $original -PathType Leaf)) {
+        throw "No existe el archivo original."
+    }
+
+    $url = (Read-Host "URL firmada completa, sin comillas ni formato Markdown").Trim()
+    if ($url.StartsWith("[") -or $url.Contains("](")) {
+        throw "Copia solo la URL del campo image."
+    }
+
+    $extension = [System.IO.Path]::GetExtension($original)
+    $destino = Join-Path ([System.IO.Path]::GetTempPath()) ("rag-imagen-" + [guid]::NewGuid().ToString("N") + $extension)
+
+    Invoke-WebRequest -Uri $url -OutFile $destino -UseBasicParsing -ErrorAction Stop
+    $hashOriginal = (Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash
+    $hashDescarga = (Get-FileHash -LiteralPath $destino -Algorithm SHA256).Hash
+
+    [pscustomobject]@{
+        ArchivoDescargado = $destino
+        Coinciden = ($hashOriginal -eq $hashDescarga)
+    } | Format-List
+
+    Invoke-Item -LiteralPath $destino
+}
+```
+
+`127.0.0.1` sirve para desarrollo en el mismo equipo: no es un endpoint para
+clientes remotos. Un despliegue remoto requiere una estrategia de publicación
+con un hostname accesible y HTTPS.
 
 ### Imagen principal
 
-Un producto puede tener cero o una imagen principal.
+Reglas aplicadas a las operaciones de la API:
 
-- Al crear una imagen con is_primary=true, se desmarca la principal anterior.
-- Al actualizar una imagen cuyo estado final sea is_primary=true, se
-  desmarcan las otras principales del producto de destino.
-- Marcar una imagen como principal no elimina la imagen anterior.
-- Establecer is_primary=false puede dejar al producto sin principal.
+- La primera imagen de un producto es principal automáticamente.
+- Crear o marcar otra como principal desmarca la anterior, sin borrarla.
+- Desmarcar la principal promueve la restante más antigua por `created_at`
+  y, en caso de empate, por `pk`.
+- Desmarcar la única principal devuelve `400`.
+- Borrar la principal promueve la restante más antigua.
+- Borrar la última imagen está permitido y deja el producto sin imágenes.
+- `PATCH` y `PUT` rechazan mover una imagen a otro producto; reenviar el
+  mismo producto está permitido.
+- Las operaciones sin cambio efectivo conservan el estado de principal.
 
-El serializer agrupa el desmarcado y el guardado en transaction.atomic().
-La base de datos conserva la UniqueConstraint condicional como última
-barrera contra dos principales para el mismo producto.
+Crear, actualizar y borrar usan `transaction.atomic()` y bloquean la misma
+fila de Product mediante `select_for_update()`. En actualización y borrado,
+el estado se vuelve a leer después de adquirir el bloqueo. La restricción
+única parcial de PostgreSQL sigue impidiendo dos principales por producto.
 
-Se desactivaron los validadores de clase automáticos del serializer para
-permitir el reemplazo. Las validaciones de los campos permanecen activas.
+Estas reglas no se aplican automáticamente a escrituras directas desde
+el ORM o Django Admin. No se reparan retroactivamente productos históricos
+que ya tengan imágenes pero ninguna principal. Las pruebas con conexiones
+concurrentes separadas siguen pendientes.
+
+Los validadores de clase automáticos del serializer están desactivados para
+permitir la sustitución de principal; las validaciones de campo permanecen
+activas.
 
 ### Filtrado por producto
 
-`GET /api/product-images?product=<id>` devuelve solo las imágenes del
-producto indicado.
+`GET /api/product-images?product=<id>` devuelve las imágenes del producto.
 
-- Sin el parámetro, se devuelve el listado completo.
-- Si el ID no corresponde a ningún producto o el producto no tiene imágenes,
-  la respuesta es `200` con `count: 0`.
-- Si el valor no es un entero, la respuesta es `400` con un mensaje de error.
+- Sin el parámetro, devuelve el listado paginado completo.
+- Si el ID no existe o no tiene imágenes, devuelve `200` con `count: 0`.
+- Si el valor no es un entero válido, devuelve `400`.
 
 ### Pruebas manuales realizadas
 
-- Escritura, comprobación de existencia y lectura de un objeto desde
-  default_storage.
-- Antes de incorporar autenticación por token, se verificó la subida de
-  una imagen real mediante la API navegable de DRF, con respuesta 201 Created.
-  El procedimiento actual requiere enviar un token desde Postman o curl.
-- Creación de una segunda imagen principal para el mismo producto:
-  la anterior quedó con is_primary=false y la nueva con is_primary=true.
-- Subida de imágenes con Pillow 13.0.0 respondió `201 Created`.
+Verificaciones locales contra Garage realizadas el 22 de noviembre de 2026:
 
-Estas comprobaciones son manuales; no equivalen a pruebas automatizadas.
+- Subida mediante la API autenticada y descarga desde Windows mediante la
+  URL firmada. El archivo original y el descargado tenían 130 165 bytes,
+  sus hashes SHA-256 coincidieron y la imagen se abrió en el visor de Windows.
+- Dos subidas del mismo archivo con el mismo nombre generaron rutas distintas,
+  ambos objetos existían en Garage y su contenido era idéntico.
+- La primera de esas imágenes quedó principal y la segunda secundaria.
+- Reemplazar la segunda conservó su registro, creó un objeto con contenido
+  diferente y eliminó el anterior, sin modificar la primera imagen.
+- Borrar la primera eliminó su registro y archivo, conservó el objeto de la
+  segunda y promovió esta a principal.
+- Borrar la segunda eliminó su registro y archivo. Se comprobó que los dos
+  registros de prueba y los tres objetos utilizados ya no existían.
+
+Las consultas de comprobación utilizaron `GarageStorage` con las credenciales
+cargadas. No se publican tokens, claves ni URLs firmadas completas.
+
+Estas verificaciones son manuales. No equivalen a una suite automatizada de
+integración S3, una prueba de carga ni una validación de concurrencia.
 
 ## Asistente RAG
 
@@ -738,19 +861,22 @@ seguridad ni una evaluación general de calidad del modelo.
 
 ## Limitaciones del almacenamiento de imágenes
 
-- Las URLs generadas están firmadas y tienen una vigencia de una hora.
-  Caduca el enlace, no el archivo.
-- Las URLs utilizan el hostname interno garage. El acceso desde el
-  navegador del host requiere resolver ese nombre o configurar una
-  estrategia de publicación; todavía no se ha verificado visualmente
-  la imagen desde el host.
-- No está implementada la eliminación de archivos de Garage al borrar
-  registros ni la limpieza de archivos sustituidos.
-- transaction.atomic() protege los cambios de PostgreSQL, no las
-  operaciones del almacenamiento S3.
-- Las solicitudes concurrentes de cambio de principal todavía no tienen
-  una estrategia explícita de serialización y manejo de conflictos.
-- El nodo único con replication_factor=1 no proporciona redundancia.
+- PostgreSQL y S3 no comparten transacción. Una subida seguida de rollback
+  puede dejar un objeto nuevo sin referencia.
+- Un fallo al eliminar un objeto después del commit queda registrado y puede
+  dejar un huérfano. No hay reintentos automáticos ni reconciliación periódica.
+- No existe una limpieza retroactiva de huérfanos ni reparación automática
+  de productos históricos sin principal.
+- Las reglas de principal y producto inmutable se aplican en la API, no a
+  todas las escrituras posibles desde Admin, shell o scripts.
+- Hay bloqueo por producto, pero faltan pruebas de concurrencia real con
+  conexiones separadas.
+- Las URLs firmadas caducan a la hora. No compartas sus parámetros completos.
+  El endpoint `127.0.0.1` es exclusivo del entorno local.
+- El validador no sanea metadatos, no recomprime ni analiza malware. Pillow
+  puede rechazar imágenes extremas antes de la comprobación de píxeles propia.
+- No hay cuota de almacenamiento ni límite de imágenes por producto en la API.
+- El nodo único con `replication_factor=1` no proporciona redundancia.
 
 ## Limitaciones conocidas
 
@@ -758,13 +884,28 @@ seguridad ni una evaluación general de calidad del modelo.
   y cualquier usuario autenticado puede crear, modificar o eliminar
   registros del catálogo. No hay roles ni propiedad de productos.
   La API de desarrollo solo se publica en 127.0.0.1.
-- **Las validaciones de la API solo aplican a la API**: el panel de administración, el shell y los scripts no pasan por los serializers. El caso más delicado son los ciclos de categorías; la base solo bloquea la autorreferencia directa. Una posible solución sería mover la regla a `Category.clean()`, pero se mantuvo simple.
+- Las reglas de serializers y vistas no protegen todas las escrituras desde
+  Admin, shell o scripts. Esto incluye los ciclos de categorías y las reglas
+  de imagen principal. Los validadores del ImageField sí se utilizan en la
+  API y en formularios del modelo, pero `save()` y `objects.create()` no
+  ejecutan automáticamente `full_clean()`.
 - **Reactivación de categorías sin comprobar el padre**: un `PATCH` con `active: true` no verifica que la categoría padre esté activa. La reactivación de productos sí comprueba que su marca y categoría efectivas estén activas.
-- **Pruebas automáticas parciales**: 75 tests cubren reglas de Brand y Category, filtros, autenticación, aislamiento de conversaciones, el pipeline RAG y la exclusión de campos internos del detalle de Product. La cobertura completa del CRUD de Product e imágenes sigue pendiente.
+- Pruebas automáticas parciales: la última suite local contiene 105 tests,
+  incluidos 30 de validación, ciclo de vida, URLs y principal de imágenes.
+  El CRUD completo de Product, cobertura adicional de imágenes y concurrencia
+  con conexiones separadas siguen pendientes; no se ha medido un porcentaje
+  de cobertura.
 
 ## Seguridad
 
-- Las credenciales viven en `.env` y `garage.toml`, que están en `.gitignore` y `.dockerignore`. El repositorio solo incluye plantillas (`.env.example`, `garage.toml.example`).
+- El repositorio incluye plantillas, no secretos reales. `garage.toml`
+  referencia archivos de secretos; `init_secrets.py` los genera en volúmenes
+  de Docker y `init_garage.py` guarda las credenciales S3 en el volumen
+  correspondiente. No escribas secretos literales en el TOML ni los subas
+  al repositorio. `.env` puede contener ajustes locales sensibles.
+- Los secretos de Garage pueden rotarse sin borrar los volúmenes de datos;
+  no se regeneran en cada arranque. No publiques su contenido ni URLs
+  firmadas completas en logs, capturas o incidencias.
 - PostgreSQL no publica puertos. La API S3 de Garage y la API de Django solo escuchan en `127.0.0.1`.
 - La key de Garage solo tiene permisos de lectura y escritura sobre un bucket.
 - La API incorpora autenticación por token, pero conserva autorización
@@ -778,21 +919,31 @@ seguridad ni una evaluación general de calidad del modelo.
 
 ### Imágenes
 
-- [x] Almacenamiento de imágenes en Garage con `django-storages[s3]`.
-- [x] Documentar la inicialización de Garage desde cero y proporcionar una plantilla `garage.toml.example` sin secretos.
-- [ ] Limitar formatos y tamaño en la subida de imágenes (formatos permitidos y límite de píxeles).
-- [ ] Probar la limpieza de archivos al eliminar registros o sustituir imágenes.
-- [ ] Verificar la descarga y visualización de una imagen real desde el host.
-- [ ] Pruebas manuales de cambio y desmarcado de la principal mediante PATCH.
+- [x] Almacenamiento en Garage con `django-storages[s3]`.
+- [x] Inicialización automática y plantilla TOML con referencias a archivos de secretos.
+- [x] Validación de formatos reales, bytes y píxeles.
+- [x] Prevención de sobrescrituras y limpieza al reemplazar o eliminar.
+- [x] Descarga y visualización desde Windows con hashes coincidentes.
+- [x] Reglas de principal, promoción y prohibición de mover imágenes entre productos.
+- [x] Verificación manual contra Garage de nombres repetidos, reemplazo, borrado y promoción al borrar la principal.
+- [ ] Comprobación manual adicional de marcar y desmarcar principal mediante PATCH (reglas cubiertas por tests automatizados).
 
 ### Tests
 
-- [x] Comando `seed_demo` con marcas, categorías y productos de demostración.
-- [x] Prueba manual de subida de imágenes y reemplazo de la principal mediante POST.
-- [x] Pruebas automáticas con `APITestCase` para las reglas de Brand y Category.
-- [ ] Pruebas automatizadas de imágenes y manejo de cambios concurrentes de principal.
-- [ ] Pruebas automatizadas para Product.
-- [ ] Pruebas manuales de creación de imágenes secundarias y creación sin enviar `is_primary`.
+- [x] `seed_demo` disponible para crear datos de demostración; su idempotencia completa aún requiere tests.
+- [x] Pruebas automatizadas de Brand y Category.
+- [x] Validación, ciclo de vida, URLs firmadas y reglas básicas de principal de imágenes.
+- [x] Creación manual de primera imagen y secundaria sin enviar `is_primary`.
+- [ ] Concurrencia de cambios, desmarcados y borrados con conexiones separadas.
+- [ ] Cobertura restante del CRUD de Product e imágenes, incluido aislamiento entre productos.
+- [ ] Suite automatizada de integración contra almacenamiento S3 (las comprobaciones actuales contra Garage son manuales).
+
+### Integración de los cambios de imágenes
+
+- [ ] Confirmar jobs `test` y `docker` para el último commit del PR.
+- [ ] Integrar en `main` y confirmar el workflow posterior al merge.
+
+La suite local y las pruebas manuales no sustituyen esas comprobaciones de CI.
 
 ### RAG
 

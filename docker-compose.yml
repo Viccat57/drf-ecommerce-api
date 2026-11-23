@@ -39,7 +39,8 @@ services:
       - garage-secrets:/secrets/garage:ro
       - garage-meta:/var/lib/garage/meta
       - garage-data:/var/lib/garage/data
-    ports: []
+    ports:
+      - "127.0.0.1:3900:3900"
 
   garage-init:
     <<: *web
@@ -81,6 +82,7 @@ services:
       GARAGE_BUCKET_NAME: ${GARAGE_BUCKET_NAME:-ecommerce-images}
       GARAGE_ENDPOINT_URL: ${GARAGE_ENDPOINT_URL:-http://garage:3900}
       GARAGE_REGION: ${GARAGE_REGION:-garage}
+      GARAGE_PUBLIC_ENDPOINT_URL: ${GARAGE_PUBLIC_ENDPOINT_URL:-http://127.0.0.1:3900}
     volumes:
       - app-secrets:/secrets/app:ro
       - s3-credentials:/secrets/s3:ro

@@ -17,6 +17,9 @@ AI_ENABLED = os.environ.get("AI_ENABLED", "0") == "1"
 AI_MIN_SIMILARITY = float(os.environ.get("AI_MIN_SIMILARITY", "0.60"))
 AI_SEARCH_LIMIT = int(os.environ.get("AI_SEARCH_LIMIT", "5"))
 AI_HISTORY_MESSAGES = int(os.environ.get("AI_HISTORY_MESSAGES", "10"))
+IMAGE_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
+IMAGE_MAX_BYTES = int(os.environ.get("IMAGE_MAX_BYTES", 5 * 1024 * 1024))
+IMAGE_MAX_PIXELS = int(os.environ.get("IMAGE_MAX_PIXELS", 25_000_000))
 
 
 # Application definition
@@ -30,7 +33,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.postgres',
     'rest_framework',
-    'rag_app',
+    'rag_app.apps.RagAppConfig',
     'django_filters',
     'rest_framework.authtoken',
 ]
@@ -59,16 +62,33 @@ REST_FRAMEWORK = {
 if all(os.environ.get(k) for k in (
     "GARAGE_ACCESS_KEY_ID", "GARAGE_SECRET_ACCESS_KEY",
     "GARAGE_BUCKET_NAME", "GARAGE_ENDPOINT_URL", "GARAGE_REGION")):
+    garage_options = {
+        "access_key": os.environ["GARAGE_ACCESS_KEY_ID"],
+        "secret_key": os.environ["GARAGE_SECRET_ACCESS_KEY"],
+        "bucket_name": os.environ["GARAGE_BUCKET_NAME"],
+        "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
+        "region_name": os.environ["GARAGE_REGION"],
+        "addressing_style": "path",
+        "signature_version": "s3v4",
+        "file_overwrite": False,
+        "default_acl": None,
+        "querystring_auth": True,
+        "querystring_expire": 3600,
+    }
+
     STORAGES = {
         "default": {
-            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "BACKEND": "rag_app.storage.GarageStorage",
+            "OPTIONS": garage_options,
+        },
+        "image_urls": {
+            "BACKEND": "storages.backends.s3.S3Storage",
             "OPTIONS": {
-                "access_key": os.environ["GARAGE_ACCESS_KEY_ID"],
-                "secret_key": os.environ["GARAGE_SECRET_ACCESS_KEY"],
-                "bucket_name": os.environ["GARAGE_BUCKET_NAME"],
-                "endpoint_url": os.environ["GARAGE_ENDPOINT_URL"],
-                "region_name": os.environ["GARAGE_REGION"],
-                "addressing_style": "path",
+                **garage_options,
+                "endpoint_url": os.environ.get(
+                    "GARAGE_PUBLIC_ENDPOINT_URL",
+                    "http://127.0.0.1:3900",
+                ),
             },
         },
         "staticfiles": {
