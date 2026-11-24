@@ -14,6 +14,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
+from django.db.models import Avg, Count, Prefetch
 from django.shortcuts import get_object_or_404
 
 class BrandViewSet(viewsets.ModelViewSet):
@@ -47,7 +48,20 @@ class CategoryViewSet(viewsets.ModelViewSet):
         serializer.save()
         
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.select_related("brand", "category")
+    queryset = (
+        Product.objects
+        .select_related("brand", "category")
+        .annotate(
+            average_rating=Avg(
+                "productreview__rating",
+                default=0.0,
+            ),
+            reviews_count=Count(
+                "productreview",
+                distinct=True,
+            ),
+        )
+    )
 
     filter_backends = [
         DjangoFilterBackend,
@@ -73,8 +87,21 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+
         if self.action == "list":
             qs = qs.filter(active=True)
+
+        if self.action == "retrieve":
+            qs = qs.prefetch_related(
+                Prefetch(
+                    "productimage_set",
+                    queryset=ProductImage.objects.order_by(
+                        "-is_primary", "created_at", "pk"
+                    ),
+                    to_attr="ordered_images",
+                )
+            )
+
         return qs
 
     def perform_destroy(self, instance):

@@ -74,13 +74,49 @@ class CategoryProductSerializer(serializers.ModelSerializer):
     
 
 class ProductListSerializer(serializers.ModelSerializer):
-    brand = BrandProductSerializer(read_only = True)
-    category = CategoryProductSerializer(read_only = True)
-    class Meta:                
+    brand = BrandProductSerializer(read_only=True)
+    category = CategoryProductSerializer(read_only=True)
+    average_rating = serializers.FloatField(
+        read_only=True,
+        default=0.0,
+    )
+    reviews_count = serializers.IntegerField(
+        read_only=True,
+        default=0,
+    )
+
+    class Meta:
         model = Product
-        fields = ['id', 'name', 'sku', 'price', 'stock', 'active', 'brand', 'category']
+        fields = [
+            "id", "name", "sku", "price", "stock",
+            "active", "brand", "category",
+            "average_rating", "reviews_count",
+        ]
         
 class ProductDetailSerializer(serializers.ModelSerializer):
+    average_rating = serializers.FloatField(
+    read_only=True,
+    default=0.0,
+    )
+    reviews_count = serializers.IntegerField(
+        read_only=True,
+        default=0,
+    )
+    images = serializers.SerializerMethodField()
+
+    def get_images(self, obj):
+        imagenes = getattr(obj, "ordered_images", None)
+
+        if imagenes is None:
+            imagenes = obj.productimage_set.order_by(
+                "-is_primary", "created_at", "pk"
+            )
+
+        return ProductImageSerializer(
+            imagenes,
+            many=True,
+            context=self.context,
+        ).data
     
     def validate_price(self,value):
         if value < 0:

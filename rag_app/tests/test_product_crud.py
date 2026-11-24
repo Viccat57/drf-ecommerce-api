@@ -368,6 +368,7 @@ class ProductListAndDeleteTests(ProductTestBase):
             {
                 "id", "name", "sku", "price", "stock",
                 "active", "brand", "category",
+                "average_rating", "reviews_count",
             },
         )
         self.assertEqual(
