@@ -8,6 +8,7 @@ router.register('brands', views.BrandViewSet)
 router.register('categories', views.CategoryViewSet)
 router.register('products', views.ProductViewSet)
 router.register('product-images',views.ProductImageViewSet)
+router.register('product-reviews', views.ProductReviewViewSet)
 
 urlpatterns = router.urls + [
     path('auth/token', obtain_auth_token, name='auth-token'),
