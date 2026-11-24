@@ -1,6 +1,6 @@
 from rest_framework import serializers
-from .models import Brand,Category, Product, ProductImage
-from django.db import transaction
+from .models import Brand,Category, Product, ProductImage,ProductReview
+from django.db import transaction, IntegrityError
 from django.shortcuts import get_object_or_404
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -74,13 +74,49 @@ class CategoryProductSerializer(serializers.ModelSerializer):
     
 
 class ProductListSerializer(serializers.ModelSerializer):
-    brand = BrandProductSerializer(read_only = True)
-    category = CategoryProductSerializer(read_only = True)
-    class Meta:                
+    brand = BrandProductSerializer(read_only=True)
+    category = CategoryProductSerializer(read_only=True)
+    average_rating = serializers.FloatField(
+        read_only=True,
+        default=0.0,
+    )
+    reviews_count = serializers.IntegerField(
+        read_only=True,
+        default=0,
+    )
+
+    class Meta:
         model = Product
-        fields = ['id', 'name', 'sku', 'price', 'stock', 'active', 'brand', 'category']
+        fields = [
+            "id", "name", "sku", "price", "stock",
+            "active", "brand", "category",
+            "average_rating", "reviews_count",
+        ]
         
 class ProductDetailSerializer(serializers.ModelSerializer):
+    average_rating = serializers.FloatField(
+    read_only=True,
+    default=0.0,
+    )
+    reviews_count = serializers.IntegerField(
+        read_only=True,
+        default=0,
+    )
+    images = serializers.SerializerMethodField()
+
+    def get_images(self, obj):
+        imagenes = getattr(obj, "ordered_images", None)
+
+        if imagenes is None:
+            imagenes = obj.productimage_set.order_by(
+                "-is_primary", "created_at", "pk"
+            )
+
+        return ProductImageSerializer(
+            imagenes,
+            many=True,
+            context=self.context,
+        ).data
     
     def validate_price(self,value):
         if value < 0:
@@ -223,3 +259,53 @@ class ProductImageSerializer(serializers.ModelSerializer):
                 siguiente.save(update_fields=["is_primary"])
 
             return super().update(actual, validated_data)
+
+class ProductReviewSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = ProductReview
+        fields = ["id", "product", "user", "rating", "comment", "created_at"]
+        read_only_fields = ["id", "created_at"]
+        validators = []
+
+    def validate_product(self, value):
+        if self.instance is None:
+            if not value.active:
+                raise serializers.ValidationError(
+                    "No puedes reseñar un producto inactivo."
+                )
+        elif value.pk != self.instance.product_id:
+            raise serializers.ValidationError(
+                "No se puede cambiar el producto de una reseña."
+            )
+        return value
+
+    def validate(self, attrs):
+        if self.instance is None:
+            usuario = self.context["request"].user
+            if ProductReview.objects.filter(
+                product=attrs["product"], user=usuario
+            ).exists():
+                raise serializers.ValidationError(
+                    "Ya reseñaste este producto."
+                )
+        return attrs
+
+    def create(self, validated_data):
+        try:
+            with transaction.atomic():
+                return super().create(validated_data)
+        except IntegrityError as exc:
+            causa = exc.__cause__
+            diagnostico = getattr(causa, "diag", None)
+            restriccion = getattr(
+                diagnostico, "constraint_name", None
+            )
+
+            if restriccion == "unique_review_per_user":
+                raise serializers.ValidationError(
+                    "Ya reseñaste este producto."
+                ) from exc
+
+            raise

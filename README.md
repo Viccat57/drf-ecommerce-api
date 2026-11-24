@@ -5,14 +5,16 @@
 Proyecto de portafolio en desarrollo: una API de e-commerce con catálogo de productos, almacenamiento de imágenes y un asesor de compras basado en RAG.
 
 > Estado: en desarrollo. Funcionan la API de catálogo con filtros y búsqueda,
-> la autenticación por token y el asistente RAG con memoria y aislamiento por
-> usuario. El manejo de imágenes incluye validación, limpieza de archivos,
-> URLs firmadas accesibles desde Windows y reglas de imagen principal.
-> La última suite validada localmente contiene 162 tests. Las verificaciones
-> manuales contra Garage se detallan por separado. Este documento describe
-> el estado de esta rama; la validación local no acredita por sí sola el CI
-> ni la integración en `main`. Las tareas restantes aparecen en
-> [Pendiente](#pendiente).
+> la autenticación por token, el asistente RAG con memoria y aislamiento por
+> usuario, y la API de reseñas con lectura pública y escritura autenticada.
+> El manejo de imágenes incluye validación, limpieza de archivos, URLs firmadas
+> accesibles desde Windows y reglas de imagen principal. El listado y el detalle
+> de Product exponen promedio y conteo de reseñas; el detalle incluye sus
+> imágenes de solo lectura. La última suite validada localmente contiene 179
+> tests. Las verificaciones manuales contra Garage se detallan por separado.
+> Este documento describe el estado de esta rama; la validación local no
+> acredita por sí sola el CI ni la integración en `main`. Las tareas restantes
+> aparecen en [Pendiente](#pendiente).
 
 ## Contenido
 
@@ -227,7 +229,7 @@ docker compose -p <nombre-proyecto> exec web python manage.py embed_products
 
 ## Pruebas
 
-La última suite validada localmente contiene 162 tests. Django crea y
+La última suite validada localmente contiene 179 tests. Django crea y
 elimina una base temporal. Las llamadas a Ollama se simulan y las pruebas
 de API de imágenes usan `InMemoryStorage`; no escriben en Garage.
 Las pruebas de URLs generan firmas con credenciales ficticias, sin descargar
@@ -257,35 +259,25 @@ rechazo de escrituras anónimas, aislamiento de conversaciones, recuperación
 RAG, umbral, flag de IA, embeddings idempotentes y `--force`, historial,
 construcción de mensajes y exclusión de campos internos de embeddings.
 
-Se añadieron 30 tests de imágenes a los 75 anteriores:
+La suite también cubre el CRUD de Product, la API de imágenes, las reglas de
+imagen principal, la concurrencia con conexiones separadas, los datos de
+demostración, las consultas de Product, la API de reseñas y la presentación
+de valoraciones e imágenes en Product.
 
-| Grupo | Tests | Alcance |
-| --- | ---: | --- |
-| Validación | 7 | Formatos permitidos, archivo falso, formato rechazado, bytes, píxeles, PATCH sin archivo y subida anónima |
-| Ciclo de vida | 8 | Nombres repetidos, borrado, reemplazo, PATCH sin archivo, cascada, rollback, referencias compartidas y fallo del almacenamiento |
-| URLs | 3 | Endpoint externo, conservación del endpoint interno y delegación de parámetros de firma |
-| Imagen principal | 12 | Primera principal, cambios, promoción, borrado, rechazo de movimiento entre productos y operaciones sin cambio efectivo |
+Las reseñas no se anidan en Product. El detalle expone `average_rating`,
+`reviews_count` e `images`; las reseñas completas se consultan mediante
+`/api/product-reviews?product=<id>`, que conserva la paginación de la API.
 
-La fase 5 añade 57 tests a los 105 anteriores:
-
-| Grupo añadido | Tests | Alcance |
-| --- | ---: | --- |
-| CRUD de Product | 29 | Lectura y escritura, validaciones, SKU, relaciones activas, reactivación, borrado lógico y restricciones de base de datos |
-| API de imágenes | 13 | Filtrado, lectura pública, aislamiento entre productos y rechazo de cambios sin efectos parciales |
-| Concurrencia de imágenes | 9 | Peticiones con conexiones separadas, operaciones con el producto bloqueado y operaciones simultáneas de creación, marcado, desmarcado y borrado |
-| Datos de demostración | 4 | Creación, repetición sin duplicados, restauración de campos demo y conservación de registros ajenos |
-| Consultas de Product | 2 | Listado paginado sin crecimiento de consultas por producto y consulta de detalle |
-
-El módulo de concurrencia se validó localmente y pasó cinco ejecuciones
-adicionales consecutivas. Estas pruebas no son una prueba de carga ni
-demuestran la ausencia de todas las condiciones de carrera. La comprobación
-temporal de que un hilo sigue activo no demuestra por sí sola que esté
-esperando un bloqueo de PostgreSQL.
+Las pruebas de concurrencia usan conexiones separadas y cubren operaciones
+simultáneas de creación, marcado, desmarcado y borrado de imágenes. No son
+una prueba de carga ni demuestran la ausencia de todas las condiciones de
+carrera.
 
 Las pruebas de consultas comprueban dos consultas para el listado, tanto
-con un producto como con diez, y una para el detalle. Miden la ejecución de
-la vista y su serialización, con paginación controlada en el test; no incluyen
-el coste completo del middleware ni de una petición autenticada.
+con un producto como con diez, y dos para el detalle: producto con agregados
+de reseñas e imágenes. Miden la ejecución de la vista y su serialización,
+con paginación controlada en el test; no incluyen el coste completo del
+middleware ni de una petición autenticada.
 
 Estos resultados no equivalen a una medición porcentual de cobertura.
 No se ha configurado un umbral de coverage. Las pruebas automatizadas de
@@ -307,6 +299,9 @@ La API utiliza `TokenAuthentication` de Django REST framework.
   catálogo: no existen roles ni propiedad de productos.
 - El asistente requiere autenticación y cada usuario solo puede continuar
   sus propias conversaciones.
+- La lectura de reseñas es pública. Crear una reseña requiere autenticación;
+  editarla o eliminarla está permitido solo a su autor o a un usuario con
+  `is_staff`.
 
 ### Obtener un token
 
@@ -358,6 +353,10 @@ Este aislamiento se aplica al endpoint del chat. No implica cifrado de
 mensajes ni impide el acceso desde Django Admin a administradores con
 los permisos correspondientes.
 
+Las reseñas sí tienen autoría: un usuario autenticado puede crear una reseña
+y solo su autor, o un administrador con `is_staff`, puede modificarla o
+eliminarla. No existen roles adicionales ni moderación de reseñas.
+
 ## Endpoints disponibles
 
 | Ruta | Métodos | Notas |
@@ -372,6 +371,8 @@ los permisos correspondientes.
 | `/api/product-images/<id>` | GET, PUT, PATCH, DELETE | Consulta, reemplaza o elimina una imagen; no permite cambiar su producto; DELETE limpia el archivo tras commit y promueve otra principal cuando corresponde |
 | `/api/ia/ask` | POST | Requiere token; recibe `query` y `conversation_id` opcional; solo permite continuar conversaciones propias |
 | `/api/auth/token` | POST | Obtiene un token con credenciales de una cuenta existente |
+| `/api/product-reviews` | GET, POST | Lista reseñas paginadas; admite `?product=<id>`; la creación requiere autenticación y no permite reseñar productos inactivos |
+| `/api/product-reviews/<id>` | GET, PUT, PATCH, DELETE | El detalle es público; editar o eliminar requiere ser el autor o `is_staff`; no permite cambiar el producto |
 
 Las rutas de la API se usan sin barra final. La lectura del catálogo es
 pública; sus operaciones de escritura requieren el encabezado
@@ -385,6 +386,12 @@ la limpieza del archivo después del commit. Si era principal, promueve la
 imagen restante más antigua. Borrar la última imagen está permitido.
 La limpieza comprueba que otra fila no siga referenciando el mismo archivo;
 los errores de almacenamiento se registran y pueden dejar objetos huérfanos.
+
+En reseñas, `POST` asigna el autor desde el token autenticado. No se puede
+enviar `user`; tampoco se puede cambiar el producto de una reseña existente.
+Un usuario solo puede crear una reseña por producto. Las reseñas existentes
+de un producto desactivado siguen siendo accesibles y administrables, pero no
+se aceptan reseñas nuevas para ese producto.
 
 ## Filtros y búsqueda de productos
 
@@ -418,13 +425,18 @@ Estos filtros son independientes de la recuperación semántica del RAG.
 El endpoint del chat no aplica automáticamente los parámetros del listado
 ni garantiza encontrar el producto más barato de todo el catálogo.
 
+El listado y el detalle de Product incluyen `average_rating` y
+`reviews_count`. Si un producto no tiene reseñas, ambos campos son `0.0` y
+`0`, respectivamente. El promedio es de las reseñas existentes; no se
+calcula en tiempo de escritura de una reseña.
+
 ## Modelos
 
 - **Category**: relación recursiva mediante `parent`; una subcategoría es una categoría con padre.
 - **Brand**: marca de productos y estado `active`.
 - **Product**: precio `Decimal(10,2)`, stock, especificaciones en `JSONB` y estado `active`.
 - **ProductImage**: imagen mediante `ImageField`, relación con producto y marca de imagen principal. Cuenta con endpoints.
-- **ProductReview**: calificación de 1 a 5, ligada a un producto y a un usuario. Todavía no tiene endpoints.
+- **ProductReview**: calificación de 1 a 5, ligada a un producto y a un usuario. Tiene endpoints de lectura, creación, actualización y eliminación.
 - **Conversation**: conversación persistente identificada mediante UUID y asociada a un usuario. El campo admite NULL para conservar conversaciones anteriores a la incorporación de autenticación; esas conversaciones no pueden continuarse desde la API.
 - **Message**: pregunta o respuesta asociada a una conversación, con IDs de productos recuperados en la respuesta.
 
@@ -468,6 +480,13 @@ Las reglas viven en tres capas, porque cada una protege contra cosas distintas.
   declarado en el campo del modelo y se utiliza en la API y en formularios
   del modelo; `save()` y `objects.create()` no ejecutan automáticamente
   toda la validación del modelo.
+- Las reseñas nuevas requieren un producto activo; las reseñas existentes
+  pueden seguir editándose o eliminándose aunque el producto esté desactivado.
+- Una reseña no puede cambiar de producto.
+- El autor de una reseña se asigna desde el usuario autenticado y no puede
+  modificarse.
+- Solo el autor de una reseña o un usuario con `is_staff` puede actualizarla
+  o eliminarla.
 
 ## Decisiones de diseño
 
@@ -923,11 +942,15 @@ seguridad ni una evaluación general de calidad del modelo.
   API y en formularios del modelo, pero `save()` y `objects.create()` no
   ejecutan automáticamente `full_clean()`.
 - **Reactivación de categorías sin comprobar el padre**: un `PATCH` con `active: true` no verifica que la categoría padre esté activa. La reactivación de productos sí comprueba que su marca y categoría efectivas estén activas.
-- La última suite validada localmente contiene 162 tests e incluye CRUD de
+- La última suite validada localmente contiene 179 tests e incluye CRUD de
   Product, cobertura adicional de imágenes, concurrencia con conexiones
-  separadas, datos de demostración y consultas de Product. No es una
-  verificación exhaustiva: no se ha medido un porcentaje de cobertura ni
-  existe una suite automatizada de integración contra Garage.
+  separadas, datos de demostración, consultas de Product, API de reseñas y
+  presentación de valoraciones e imágenes. No es una verificación exhaustiva:
+  no se ha medido un porcentaje de cobertura ni existe una suite automatizada
+  de integración contra Garage.
+- No hay moderación de reseñas ni límite de reseñas por producto distinto de
+  una reseña por usuario y producto. La calificación es obligatoria y está
+  limitada a 1–5.
 
 ## Seguridad
 
@@ -973,25 +996,9 @@ seguridad ni una evaluación general de calidad del modelo.
 - [x] Pruebas de consultas del listado y detalle de Product.
 - [ ] Suite automatizada de integración contra almacenamiento S3; las comprobaciones actuales contra Garage son manuales.
 
-Las pruebas anteriores están validadas localmente en la rama de fase 5.
-La medición porcentual de cobertura y un umbral en CI quedan como mejoras
-opcionales, no realizadas en esta fase.
-
-### Integración de los cambios de imágenes — fase 4
-
-- [x] Jobs `test` y `docker` aprobados en el PR #9.
-- [x] Integración en `main` mediante el merge `8c4cc53`.
-- [x] Workflow posterior al merge en `main` confirmado en verde.
-
-### Integración de la cobertura restante — fase 5
-
-- [x] Suite local de 162 tests pasando.
-- [x] Cinco repeticiones adicionales del módulo de concurrencia satisfactorias.
-- [x] Comprobación de migraciones sin cambios y `git diff --check` sin errores.
-- [ ] Confirmar jobs `test` y `docker` para el último commit del PR de fase 5.
-- [ ] Integrar la fase 5 en `main` y confirmar el workflow posterior al merge.
-
-La suite local y las pruebas manuales no sustituyen las comprobaciones de CI.
+La suite completa está validada localmente en esta rama. La medición
+porcentual de cobertura y un umbral en CI quedan como mejoras opcionales,
+no realizadas.
 
 ### RAG
 
@@ -1016,4 +1023,6 @@ La suite local y las pruebas manuales no sustituyen las comprobaciones de CI.
 - [x] Filtrado de imágenes por producto mediante `/api/product-images?product=<id>`.
 - [x] Filtros y búsqueda de productos por categoría, marca, texto, precio, stock y orden.
 - [x] Autenticación con TokenAuthentication y lectura pública/escritura autenticada, sin roles por decisión de alcance.
-- [ ] Endpoints de reseñas, pospuestos hasta después de las fases de imágenes y cobertura de tests.
+- [x] Endpoints de reseñas con lectura pública, escritura autenticada, autoría, permisos y filtrado por producto.
+- [x] Promedio y conteo de reseñas en el listado y detalle de Product.
+- [x] Imágenes de solo lectura en el detalle de Product.

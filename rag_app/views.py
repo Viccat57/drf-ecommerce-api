@@ -1,19 +1,20 @@
 from rest_framework import viewsets
 from rest_framework import filters
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Brand, Category, Product, ProductImage, Conversation, Message
-from .serializers import BrandSerializer, CategorySerializer, ProductDetailSerializer, ProductListSerializer, ProductImageSerializer
+from .models import Brand, Category, Product, ProductImage, Conversation, Message, ProductReview
+from .serializers import BrandSerializer, CategorySerializer, ProductDetailSerializer, ProductListSerializer, ProductImageSerializer, ProductReviewSerializer
 from .filters import ProductFilter
 from rag_app.ai import search_products, generate_response, build_retrieval_query
-from .permissions import AIEnabled
+from .permissions import AIEnabled, IsReviewAuthorOrStaff
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
+from django.db.models import Avg, Count, Prefetch
 from django.shortcuts import get_object_or_404
 
 class BrandViewSet(viewsets.ModelViewSet):
@@ -47,7 +48,20 @@ class CategoryViewSet(viewsets.ModelViewSet):
         serializer.save()
         
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.select_related("brand", "category")
+    queryset = (
+        Product.objects
+        .select_related("brand", "category")
+        .annotate(
+            average_rating=Avg(
+                "productreview__rating",
+                default=0.0,
+            ),
+            reviews_count=Count(
+                "productreview",
+                distinct=True,
+            ),
+        )
+    )
 
     filter_backends = [
         DjangoFilterBackend,
@@ -73,8 +87,21 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+
         if self.action == "list":
             qs = qs.filter(active=True)
+
+        if self.action == "retrieve":
+            qs = qs.prefetch_related(
+                Prefetch(
+                    "productimage_set",
+                    queryset=ProductImage.objects.order_by(
+                        "-is_primary", "created_at", "pk"
+                    ),
+                    to_attr="ordered_images",
+                )
+            )
+
         return qs
 
     def perform_destroy(self, instance):
@@ -187,3 +214,25 @@ class AskView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+class ProductReviewViewSet(viewsets.ModelViewSet):
+    queryset = ProductReview.objects.select_related("user").order_by(
+        "-created_at", "-id"
+    )
+    serializer_class = ProductReviewSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly, IsReviewAuthorOrStaff]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action == "list":
+            product = self.request.query_params.get("product")
+            if product is not None:
+                if not product.isdigit():
+                    raise ValidationError(
+                        "Se necesita un ID valido para buscar un producto"
+                    )
+                qs = qs.filter(product_id=product)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)

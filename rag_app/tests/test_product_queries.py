@@ -68,14 +68,14 @@ class ProductQueryTests(APITestCase):
             self.assertIn("name", item["brand"])
             self.assertIn("name", item["category"])
 
-    def test_detalle_se_resuelve_con_una_consulta(self):
+    def test_detalle_se_resuelve_con_dos_consultas(self):
         producto = self.crear_producto(0)
         vista = ProductViewSet.as_view({"get": "retrieve"})
         request = self.factory.get(
             f"/api/products/{producto.pk}"
         )
 
-        with self.assertNumQueries(1):
+        with self.assertNumQueries(2):
             response = vista(request, pk=producto.pk)
             response.render()
 
@@ -85,3 +85,6 @@ class ProductQueryTests(APITestCase):
         self.assertEqual(
             response.data["category"], producto.category_id
         )
+        self.assertEqual(response.data["average_rating"], 0.0)
+        self.assertEqual(response.data["reviews_count"], 0)
+        self.assertEqual(response.data["images"], [])
